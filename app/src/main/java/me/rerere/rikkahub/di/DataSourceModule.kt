@@ -37,6 +37,8 @@ import me.rerere.rikkahub.data.db.migrations.Migration_14_15
 import me.rerere.rikkahub.data.db.migrations.Migration_15_16
 import me.rerere.rikkahub.data.db.migrations.Migration_23_24
 import me.rerere.rikkahub.data.ai.mcp.McpManager
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthManager
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthStore
 import me.rerere.rikkahub.data.agentrun.AgentRunBootRecovery
 import me.rerere.rikkahub.data.agentrun.AgentRunRepository
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
@@ -150,7 +152,26 @@ val dataSourceModule = module {
     single { AgentRunRepository(get()) }
     single { AgentRunBootRecovery(context = get(), repository = get()) }
 
-    single { McpManager(context = get(), settingsStore = get(), appScope = get(), filesManager = get()) }
+    single { McpOAuthStore(context = get(), json = get()) }
+    single {
+        McpOAuthManager(
+            context = get(),
+            scope = get<AppScope>(),
+            client = get(named("codex")),
+            json = get(),
+            store = get(),
+        )
+    }
+
+    single {
+        McpManager(
+            context = get(),
+            settingsStore = get(),
+            appScope = get(),
+            filesManager = get(),
+            oauthManager = get(),
+        )
+    }
 
     single {
         GenerationHandler(

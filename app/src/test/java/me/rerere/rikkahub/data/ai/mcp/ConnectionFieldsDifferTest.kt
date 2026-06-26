@@ -62,4 +62,26 @@ class ConnectionFieldsDifferTest {
     fun `name change is not a connection change`() {
         assertFalse(connectionFieldsDiffer(sse("https://a", name = "old"), sse("https://a", name = "new")))
     }
+
+    @Test
+    fun `enabling oauth is a connection change`() {
+        val off = McpServerConfig.StreamableHTTPServer(
+            id = id,
+            commonOptions = McpCommonOptions(name = "s"),
+            url = "https://a",
+        )
+        val on = off.copy(commonOptions = off.commonOptions.copy(oauth = McpOAuthConfig(enabled = true)))
+        assertTrue(connectionFieldsDiffer(off, on))
+    }
+
+    @Test
+    fun `oauth scope change is a connection change`() {
+        val a = McpServerConfig.StreamableHTTPServer(
+            id = id,
+            commonOptions = McpCommonOptions(name = "s", oauth = McpOAuthConfig(enabled = true, scope = "openid")),
+            url = "https://a",
+        )
+        val b = a.copy(commonOptions = a.commonOptions.copy(oauth = McpOAuthConfig(enabled = true, scope = "all")))
+        assertTrue(connectionFieldsDiffer(a, b))
+    }
 }

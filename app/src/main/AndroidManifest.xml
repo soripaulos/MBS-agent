@@ -207,6 +207,22 @@
       </intent-filter>
     </activity>
     <activity
+      android:name=".ui.activity.McpOAuthRedirectActivity"
+      android:exported="true"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar">
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+
+        <data
+          android:host="mcp"
+          android:path="/oauth"
+          android:scheme="rikkahub" />
+      </intent-filter>
+    </activity>
+    <activity
       android:name="com.yalantis.ucrop.UCropActivity"
       android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
     <activity

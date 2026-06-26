@@ -145,6 +145,7 @@ private const val TAG = "RouteActivity"
 class RouteActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN_CODEX_SETTINGS = "open_codex_settings"
+        const val EXTRA_OPEN_MCP_SETTINGS = "open_mcp_settings"
     }
 
     private val highlighter by inject<Highlighter>()
@@ -245,6 +246,12 @@ class RouteActivity : ComponentActivity() {
             }
             intent.removeExtra(EXTRA_OPEN_CODEX_SETTINGS)
         }
+        if (intent.getBooleanExtra(EXTRA_OPEN_MCP_SETTINGS, false)) {
+            navStack?.let { stack ->
+                if (stack.lastOrNull() != Screen.SettingMcp) stack.add(Screen.SettingMcp)
+            }
+            intent.removeExtra(EXTRA_OPEN_MCP_SETTINGS)
+        }
         // Navigate to the chat screen if a conversation ID is provided
         intent.getStringExtra("conversationId")?.let { text ->
             navStack?.add(Screen.Chat(text))
@@ -287,6 +294,10 @@ class RouteActivity : ComponentActivity() {
                 val destination = Screen.SettingProviderDetail(DEFAULT_CODEX_PROVIDER_ID.toString())
                 if (backStack.lastOrNull() != destination) backStack.add(destination)
                 intent.removeExtra(EXTRA_OPEN_CODEX_SETTINGS)
+            }
+            if (intent.getBooleanExtra(EXTRA_OPEN_MCP_SETTINGS, false)) {
+                if (backStack.lastOrNull() != Screen.SettingMcp) backStack.add(Screen.SettingMcp)
+                intent.removeExtra(EXTRA_OPEN_MCP_SETTINGS)
             }
         }
 

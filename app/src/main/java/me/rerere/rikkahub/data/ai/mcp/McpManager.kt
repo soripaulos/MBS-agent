@@ -37,6 +37,8 @@ import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthManager
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthStatus
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.R
@@ -61,6 +63,7 @@ class McpManager(
     private val settingsStore: SettingsStore,
     private val appScope: AppScope,
     private val filesManager: FilesManager,
+    private val oauthManager: McpOAuthManager,
 ) {
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -146,6 +149,31 @@ class McpManager(
                     }
                 }
         }
+
+        // Reconnect a server as soon as it finishes OAuth sign-in. This is independent of any
+        // UI being on screen: after the browser hands the user back, the token lands in the
+        // store and McpOAuthManager flips the server's status to Authorized — we pick that up
+        // here and (re)connect with the fresh bearer token. Guarded so an already-connected
+        // server (e.g. after a routine token refresh) isn't needlessly torn down.
+        appScope.launch {
+            oauthManager.status.collect { statuses ->
+                statuses.forEach { (serverId, oauthStatus) ->
+                    if (oauthStatus !is McpOAuthStatus.Authorized) return@forEach
+                    val uuid = runCatching { Uuid.parse(serverId) }.getOrNull() ?: return@forEach
+                    val server = settingsStore.settingsFlow.value.mcpServers.firstOrNull {
+                        it.id == uuid &&
+                            it.commonOptions.enable &&
+                            it.commonOptions.oauth?.enabled == true
+                    } ?: return@forEach
+                    val current = syncingStatus.value[uuid]
+                    if (current == McpStatus.Connected || current == McpStatus.Connecting) return@forEach
+                    appScope.launch {
+                        runCatching { addClient(server) }
+                            .onFailure { Log.w(TAG, "post-oauth connect failed for ${server.commonOptions.name}", it) }
+                    }
+                }
+            }
+        }
     }
 
     fun getClient(config: McpServerConfig): Client? {
@@ -206,34 +234,55 @@ class McpManager(
         return UIMessagePart.Image(url = uri.toString())
     }
 
-    private fun getTransport(config: McpServerConfig): AbstractTransport = when (config) {
-        is McpServerConfig.SseTransportServer -> {
-            SseClientTransport(
-                urlString = config.url,
-                client = client,
-                requestBuilder = {
-                    headers.appendAll(StringValues.build {
-                        config.commonOptions.headers.forEach {
-                            append(it.first, it.second)
-                        }
-                    })
-                },
-            )
-        }
+    // suspend because OAuth-enabled servers need a (possibly refreshed) bearer token resolved
+    // before the transport is built. The resolved headers are captured by the requestBuilder
+    // closure; the SDK transports invoke requestBuilder per HTTP request, and the connection is
+    // rebuilt on reconnect, so a token that expires mid-session is refreshed on the next attempt.
+    private suspend fun getTransport(config: McpServerConfig): AbstractTransport {
+        val resolvedHeaders = resolveHeaders(config)
+        return when (config) {
+            is McpServerConfig.SseTransportServer -> {
+                SseClientTransport(
+                    urlString = config.url,
+                    client = client,
+                    requestBuilder = {
+                        headers.appendAll(StringValues.build {
+                            resolvedHeaders.forEach { append(it.first, it.second) }
+                        })
+                    },
+                )
+            }
 
-        is McpServerConfig.StreamableHTTPServer -> {
-            StreamableHttpClientTransport(
-                url = config.url,
-                client = client,
-                requestBuilder = {
-                    headers.appendAll(StringValues.build {
-                        config.commonOptions.headers.forEach {
-                            append(it.first, it.second)
-                        }
-                    })
-                }
-            )
+            is McpServerConfig.StreamableHTTPServer -> {
+                StreamableHttpClientTransport(
+                    url = config.url,
+                    client = client,
+                    requestBuilder = {
+                        headers.appendAll(StringValues.build {
+                            resolvedHeaders.forEach { append(it.first, it.second) }
+                        })
+                    }
+                )
+            }
         }
+    }
+
+    // Combine the user's static headers with an OAuth bearer header when the server opts into
+    // OAuth. A throw here (no valid token) surfaces through addClient/sync as an Error status,
+    // prompting the user to authorize from Settings. A user-supplied Authorization header takes
+    // precedence and disables the automatic bearer to avoid sending two conflicting credentials.
+    private suspend fun resolveHeaders(config: McpServerConfig): List<Pair<String, String>> {
+        val staticHeaders = config.commonOptions.headers
+        val oauth = config.commonOptions.oauth
+        if (oauth?.enabled != true) return staticHeaders
+        if (staticHeaders.any { it.first.equals("Authorization", ignoreCase = true) }) {
+            return staticHeaders
+        }
+        val token = oauthManager.getValidAccessToken(config.id.toString())
+            ?: throw McpOAuthRequiredException(
+                context.getString(R.string.mcp_oauth_authorization_required)
+            )
+        return staticHeaders + ("Authorization" to "Bearer $token")
     }
 
     suspend fun addClient(config: McpServerConfig) = withContext(Dispatchers.IO) {
@@ -250,7 +299,6 @@ class McpManager(
         cancelReconnect(config.id)
         reconnectAttempts[config.id] = 0
 
-        val transport = getTransport(config)
         val client = Client(
             clientInfo = Implementation(
                 name = config.commonOptions.name,
@@ -258,32 +306,37 @@ class McpManager(
             )
         )
 
-        // 注册 transport 回调以支持自动重连
-        transport.onClose {
-            Log.i(TAG, "Transport closed for ${config.commonOptions.name}")
-            val currentStatus = syncingStatus.value[config.id]
-            // 只有在已连接状态下才触发重连，避免正常关闭时重连
-            if (currentStatus == McpStatus.Connected) {
-                scheduleReconnect(config)
-            }
-        }
-
-        transport.onError { error ->
-            Log.e(TAG, "Transport error for ${config.commonOptions.name}: ${error.message}")
-            val currentStatus = syncingStatus.value[config.id]
-            // 只有在已连接状态下才触发重连
-            if (currentStatus == McpStatus.Connected) {
-                scheduleReconnect(config)
-            }
-        }
-
-        // Defensive: removeClientLocked above should have cleared any prior entry for this id,
-        // but a stale key (e.g. left by sync()'s remove+put under a different config instance)
-        // would otherwise leak a live Client when we overwrite. Close+drop it explicitly.
-        closeExistingFor(config.id)
-        clients[config] = client
         runCatching {
             setStatus(config = config, status = McpStatus.Connecting)
+            // getTransport resolves (and may refresh) the OAuth bearer token for oauth-enabled
+            // servers; it throws McpOAuthRequiredException when there is no valid token, which
+            // is reported below as an Error status prompting the user to sign in.
+            val transport = getTransport(config)
+
+            // 注册 transport 回调以支持自动重连
+            transport.onClose {
+                Log.i(TAG, "Transport closed for ${config.commonOptions.name}")
+                val currentStatus = syncingStatus.value[config.id]
+                // 只有在已连接状态下才触发重连，避免正常关闭时重连
+                if (currentStatus == McpStatus.Connected) {
+                    scheduleReconnect(config)
+                }
+            }
+
+            transport.onError { error ->
+                Log.e(TAG, "Transport error for ${config.commonOptions.name}: ${error.message}")
+                val currentStatus = syncingStatus.value[config.id]
+                // 只有在已连接状态下才触发重连
+                if (currentStatus == McpStatus.Connected) {
+                    scheduleReconnect(config)
+                }
+            }
+
+            // Defensive: removeClientLocked above should have cleared any prior entry for this id,
+            // but a stale key (e.g. left by sync()'s remove+put under a different config instance)
+            // would otherwise leak a live Client when we overwrite. Close+drop it explicitly.
+            closeExistingFor(config.id)
+            clients[config] = client
             client.connect(transport)
             sync(config)
             setStatus(config = config, status = McpStatus.Connected)
@@ -566,7 +619,10 @@ internal fun connectionFieldsDiffer(old: McpServerConfig, new: McpServerConfig):
         is McpServerConfig.StreamableHTTPServer -> new.url
     }
     if (oldUrl != newUrl) return true
-    return old.commonOptions.headers != new.commonOptions.headers
+    if (old.commonOptions.headers != new.commonOptions.headers) return true
+    // Toggling OAuth on/off (or changing the scope) changes how the connection authenticates,
+    // so it must force a reconnect even though the url/headers are unchanged.
+    return old.commonOptions.oauth != new.commonOptions.oauth
 }
 
 private fun redactConfigForLog(config: McpServerConfig): String {
@@ -591,6 +647,13 @@ private fun redactConfigForLog(config: McpServerConfig): String {
         append(")")
     }
 }
+
+/**
+ * Thrown while building a transport for an OAuth-enabled server that has no valid access token
+ * (never authorized, or the refresh token was rejected). Caught by the connect/sync paths and
+ * turned into an [McpStatus.Error] so the UI can prompt the user to sign in.
+ */
+class McpOAuthRequiredException(message: String) : Exception(message)
 
 internal val McpJson: Json by lazy {
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
