@@ -13,7 +13,7 @@ import kotlinx.serialization.Serializable
  * re-registers.
  */
 @Serializable
-internal data class McpOAuthRecord(
+data class McpOAuthRecord(
     val serverId: String,
     // Canonical resource identifier of the MCP server (RFC 8707 `resource` parameter).
     val resource: String = "",
@@ -34,7 +34,7 @@ internal data class McpOAuthRecord(
 }
 
 @Serializable
-internal data class McpOAuthState(
+data class McpOAuthState(
     val records: List<McpOAuthRecord> = emptyList(),
 )
 
@@ -43,7 +43,7 @@ internal data class McpOAuthState(
  * Only the fields we consume are modeled; unknown keys are ignored by the parser.
  */
 @Serializable
-internal data class AuthServerMetadata(
+data class AuthServerMetadata(
     @SerialName("issuer") val issuer: String? = null,
     @SerialName("authorization_endpoint") val authorizationEndpoint: String? = null,
     @SerialName("token_endpoint") val tokenEndpoint: String? = null,
@@ -57,7 +57,7 @@ internal data class AuthServerMetadata(
  * that can issue tokens for this MCP server.
  */
 @Serializable
-internal data class ProtectedResourceMetadata(
+data class ProtectedResourceMetadata(
     @SerialName("resource") val resource: String? = null,
     @SerialName("authorization_servers") val authorizationServers: List<String>? = null,
     @SerialName("scopes_supported") val scopesSupported: List<String>? = null,
@@ -67,7 +67,7 @@ internal data class ProtectedResourceMetadata(
  * Dynamic Client Registration response (RFC 7591). Only the fields we use are modeled.
  */
 @Serializable
-internal data class ClientRegistrationResponse(
+data class ClientRegistrationResponse(
     @SerialName("client_id") val clientId: String? = null,
     @SerialName("client_secret") val clientSecret: String? = null,
 )
