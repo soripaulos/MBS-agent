@@ -21,7 +21,7 @@ import javax.crypto.spec.GCMParameterSpec
  * Access tokens and refresh tokens are secrets, so they deliberately do NOT live in the plain
  * Settings datastore alongside the rest of the MCP config.
  */
-internal class McpOAuthStore(
+class McpOAuthStore(
     context: Context,
     private val json: Json,
 ) {
