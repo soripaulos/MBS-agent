@@ -802,6 +802,12 @@ class ChatService(
 
             // check invalid messages
             checkInvalidMessages(conversationId)
+
+            // Phase 17 — auto-compaction: when the estimated context crosses the
+            // assistant's threshold, compress older history into a summary BEFORE this
+            // turn is generated, so long-running conversations keep fitting the window.
+            maybeAutoCompact(conversationId, assistant)
+
             val conversation = getConversationFlow(conversationId).value
 
             // start generating
@@ -863,6 +869,7 @@ class ChatService(
                 conversationModeInjectionIds = conversation.modeInjectionIds,
                 conversationLorebookIds = conversation.lorebookIds,
                 workspaceCwd = conversation.workspaceCwd,
+                workspaceAgentPrompt = readWorkspaceAgentPrompt(assistant.workspaceId?.toString()),
                 memories = if (assistant.useGlobalMemory) {
                     memoryRepository.getGlobalMemories()
                 } else {
@@ -1240,6 +1247,99 @@ class ChatService(
             // Suggestion generation is auxiliary — log only, don't push onto the
             // user-facing error stream (mirrors the generateTitle failure handling).
             Log.w(TAG, "generateSuggestion failed", it)
+        }
+    }
+
+    // ---- Phase 17: workspace AGENT.md harness + auto-compaction ----
+
+    /**
+     * Read the workspace's AGENT.md harness file (Hermes AGENTS.md parity) for injection
+     * into the system prompt. Tries AGENT.md then AGENTS.md at the workspace files root
+     * (the area mounted at /workspace in the rootfs); missing or unreadable → null.
+     * Capped at 24k chars so a runaway file can't flood the prompt.
+     */
+    private suspend fun readWorkspaceAgentPrompt(workspaceId: String?): String? {
+        if (workspaceId.isNullOrBlank()) return null
+        for (candidate in listOf("AGENT.md", "AGENTS.md")) {
+            val text = runCatching {
+                val size = workspaceRepository.fileSize(
+                    workspaceId, me.rerere.workspace.WorkspaceStorageArea.FILES, candidate
+                )
+                if (size <= 0L || size > 256_000L) return@runCatching null
+                val buffer = java.io.ByteArrayOutputStream(size.toInt())
+                workspaceRepository.exportFile(
+                    workspaceId, me.rerere.workspace.WorkspaceStorageArea.FILES, candidate, buffer
+                )
+                buffer.toString(Charsets.UTF_8.name())
+            }.getOrNull()
+            if (!text.isNullOrBlank()) return text.take(24_000)
+        }
+        return null
+    }
+
+    /**
+     * Estimate the context size (tokens) the next turn will pay for this conversation:
+     * the most recent message that reported usage (promptTokens + completionTokens is
+     * what the provider actually charged for the previous turn's full context), falling
+     * back to a chars/4 heuristic when no usage is available.
+     */
+    private fun estimateContextTokens(conversation: Conversation): Long {
+        val messages = conversation.currentMessages
+        for (msg in messages.asReversed()) {
+            val usage = msg.usage ?: continue
+            val total = usage.totalTokens.takeIf { it > 0 }
+                ?: (usage.promptTokens + usage.completionTokens)
+            if (total > 0) return total.toLong()
+        }
+        var chars = 0L
+        for (msg in messages) {
+            for (part in msg.parts) {
+                if (part is UIMessagePart.Text) chars += part.text.length
+            }
+        }
+        return chars / 4
+    }
+
+    /**
+     * Phase 17 — threshold-based auto-compaction. When enabled on the assistant and the
+     * estimated context crosses the threshold, everything except the most recent messages
+     * is compressed into a summary via [compressConversation] (the same pipeline as the
+     * manual Compress dialog). The kept window is widened until it starts at a USER
+     * message so an assistant tool-call/result chain is never split at the boundary.
+     * Failures are logged and swallowed — a failed compaction must never block the turn.
+     */
+    private suspend fun maybeAutoCompact(conversationId: Uuid, assistant: Assistant) {
+        if (!assistant.autoCompactEnabled) return
+        val conversation = getConversationFlow(conversationId).value
+        val messages = conversation.currentMessages
+        val keepRecent = assistant.autoCompactKeepRecentMessages.coerceAtLeast(4)
+        // Not enough history beyond the kept window to be worth an LLM call.
+        if (messages.size <= keepRecent + 4) return
+        val estimate = estimateContextTokens(conversation)
+        if (estimate < assistant.autoCompactThresholdTokens) return
+
+        var keep = keepRecent
+        while (keep < messages.size && messages[messages.size - keep].role != MessageRole.USER) {
+            keep++
+        }
+        if (keep >= messages.size) {
+            Log.w(TAG, "autoCompact: no clean USER boundary found; skipping compaction")
+            return
+        }
+
+        Log.i(
+            TAG,
+            "autoCompact: estimated $estimate tokens >= threshold " +
+                "${assistant.autoCompactThresholdTokens}; compressing all but last $keep messages"
+        )
+        compressConversation(
+            conversationId = conversationId,
+            conversation = conversation,
+            additionalPrompt = "",
+            targetTokens = assistant.autoCompactTargetTokens,
+            keepRecentMessages = keep,
+        ).onFailure {
+            Log.w(TAG, "autoCompact: compression failed; continuing with uncompacted context", it)
         }
     }
 

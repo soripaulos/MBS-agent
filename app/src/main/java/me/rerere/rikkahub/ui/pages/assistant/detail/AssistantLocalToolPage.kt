@@ -903,6 +903,20 @@ private fun AssistantLocalToolContent(
             )
             item(
                 headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_session_search_title))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_session_search_desc))
+                },
+                trailingContent = {
+                    PermissionedSwitch(
+                        checked = assistant.localTools.contains(LocalToolOption.SessionSearch),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.SessionSearch, it) }
+                    )
+                }
+            )
+            item(
+                headlineContent = {
                     Text(stringResource(R.string.assistant_page_local_tools_workflows_title))
                 },
                 supportingContent = {

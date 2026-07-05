@@ -31,7 +31,10 @@ fun buildMemoryTools(
             - No relevant record: `create` + `content`
             - Existing relevant record: `edit` + `id` + `content`
             - Outdated/irrelevant record: `delete` + `id`
-            Memories will automatically appear in the <memories> tag in later conversations.
+            Use `kind` to classify a memory: `profile` (stable facts about who the user is —
+            name, role, timezone), `preference` (how they like things done — reply style,
+            language, formats), or `note` (everything else: plans, project state, learned facts).
+            Memories render grouped by kind in the <memories> tag in later conversations.
             Do not store sensitive information (e.g., ethnicity, religion, sexual orientation, political views, sex life, criminal records).
             You may store: preferred name, preferences, plans, work-related notes, chat style preferences, first chat time, etc.
             Do not show memory content directly in the conversation unless the user explicitly asks.
@@ -39,8 +42,8 @@ fun buildMemoryTools(
             Similar memories should be merged; prefer updating existing records.
 
             Examples:
-            {"action":"create","content":"User prefers brief replies and is more active on weekends."}
-            {"action":"edit","id":12,"content":"User’s preferred name updated to “A-Xing”, prefers Chinese replies."}
+            {"action":"create","kind":"preference","content":"User prefers brief replies and is more active on weekends."}
+            {"action":"edit","id":12,"kind":"profile","content":"User’s preferred name updated to “A-Xing”, prefers Chinese replies."}
             {"action":"delete","id":7}
         """.trimIndent(),
         parameters = {
@@ -66,6 +69,18 @@ fun buildMemoryTools(
                         put("type", "string")
                         put("description", "The content of the memory record (required for create/edit)")
                     })
+                    put("kind", buildJsonObject {
+                        put("type", "string")
+                        put(
+                            "enum",
+                            buildJsonArray {
+                                add("profile")
+                                add("preference")
+                                add("note")
+                            }
+                        )
+                        put("description", "Classification: profile (who the user is), preference (how they like things), note (default)")
+                    })
                 },
                 required = listOf("action")
             )
@@ -73,16 +88,24 @@ fun buildMemoryTools(
         execute = {
             val params = it.jsonObject
             val action = params["action"]?.jsonPrimitive?.contentOrNull ?: error("action is required")
+            // Phase 17 — kind is stored as a leading "[kind] " tag in the content string
+            // (no schema change; buildMemoryPrompt groups by it, untagged = note).
+            fun tagContent(raw: String): String {
+                val kind = params["kind"]?.jsonPrimitive?.contentOrNull
+                return if (kind == "profile" || kind == "preference") {
+                    if (raw.startsWith("[$kind]")) raw else "[$kind] $raw"
+                } else raw
+            }
             val payload = when (action) {
                 "create" -> {
                     val content = params["content"]?.jsonPrimitive?.contentOrNull ?: error("content is required")
-                    json.encodeToJsonElement(AssistantMemory.serializer(), onCreation(content))
+                    json.encodeToJsonElement(AssistantMemory.serializer(), onCreation(tagContent(content)))
                 }
 
                 "edit" -> {
                     val id = params["id"]?.jsonPrimitive?.intOrNull ?: error("id is required")
                     val content = params["content"]?.jsonPrimitive?.contentOrNull ?: error("content is required")
-                    json.encodeToJsonElement(AssistantMemory.serializer(), onUpdate(id, content))
+                    json.encodeToJsonElement(AssistantMemory.serializer(), onUpdate(id, tagContent(content)))
                 }
 
                 "delete" -> {

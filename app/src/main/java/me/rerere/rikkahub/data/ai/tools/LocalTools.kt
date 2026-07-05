@@ -187,6 +187,9 @@ sealed class LocalToolOption {
     @Serializable @SerialName("browser")             data object Browser            : LocalToolOption()
     @Serializable @SerialName("web_fetch")           data object WebFetch           : LocalToolOption()
 
+    // Phase 17 — cross-session recall (Hermes session_search parity).
+    @Serializable @SerialName("session_search")       data object SessionSearch       : LocalToolOption()
+
     // Phase 25 — Phase 3 second cut + ExternalStorage + Archive.
     @Serializable @SerialName("sms_send")             data object SmsSend             : LocalToolOption()
     @Serializable @SerialName("wallpaper")            data object Wallpaper           : LocalToolOption()
@@ -905,9 +908,13 @@ class LocalTools(
         if (options.contains(LocalToolOption.CostGuards)) {
             tools.add(me.rerere.rikkahub.costguards.checkTokenUsageTool(settingsStore, conversationRepo))
         }
+        if (options.contains(LocalToolOption.SessionSearch)) {
+            tools.addAll(createSessionSearchTools(conversationRepo))
+        }
         if (options.contains(LocalToolOption.SkillImport)) {
             tools.add(me.rerere.rikkahub.skills.skillInstallFromUrlTool(skillUrlImporter, settingsStore, skillManager))
             tools.add(me.rerere.rikkahub.skills.skillInstallFromTextTool(skillUrlImporter, settingsStore, skillManager))
+            tools.add(me.rerere.rikkahub.skills.skillManageTool(settingsStore, skillManager))
         }
         if (options.contains(LocalToolOption.JsSkills)) {
             tools.add(me.rerere.rikkahub.skills.js.runJsTool(

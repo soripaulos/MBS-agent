@@ -63,6 +63,24 @@ data class Assistant(
     val fastPathRouterEnabled: Boolean = false,
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
+    // Phase 17 — Plan mode. When ON, a plan-first section is appended to the system
+    // prompt: the model must present a numbered plan and get user sign-off (via ask_user
+    // when available) before invoking side-effecting tools. Prompt-level contract; the
+    // per-tool approval layer stays the hard enforcement floor underneath it.
+    val planModeEnabled: Boolean = false,
+    // Phase 17 — Auto-compaction. When the estimated context size of the conversation
+    // crosses [autoCompactThresholdTokens], ChatService compresses everything except the
+    // most recent [autoCompactKeepRecentMessages] messages into a summary (reusing the
+    // manual compress pipeline) before the next turn is generated. The estimate is the
+    // previous turn's reported usage (promptTokens + completionTokens), falling back to
+    // chars/4 when no usage was reported.
+    val autoCompactEnabled: Boolean = false,
+    val autoCompactThresholdTokens: Int = 80_000,
+    val autoCompactKeepRecentMessages: Int = 16,
+    val autoCompactTargetTokens: Int = 2_000,
+    // Phase 17 — custom gradient background colors (hex strings "#RRGGBB" or "#AARRGGBB").
+    // Empty = built-in animated mesh gradient. Only used when [useGradientBackground] is on.
+    val gradientColors: List<String> = emptyList(),
 )
 
 @Serializable

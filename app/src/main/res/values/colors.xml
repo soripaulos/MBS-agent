@@ -7,4 +7,8 @@
   <color name="teal_700">#FF018786</color>
   <color name="black">#FF000000</color>
   <color name="white">#FFFFFFFF</color>
+  <!-- Phase 17 - switchable launcher icon backgrounds (see mipmap-anydpi-v26/ic_launcher_*.xml) -->
+  <color name="ic_launcher_bg_ocean">#FF1B6EF3</color>
+  <color name="ic_launcher_bg_midnight">#FF0D1626</color>
+  <color name="ic_launcher_bg_sunset">#FFE8663E</color>
 </resources>

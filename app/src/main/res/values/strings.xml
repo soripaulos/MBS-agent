@@ -1813,4 +1813,28 @@
   <string name="codex_response_failed">The Codex response failed.</string>
   <string name="codex_monthly_limit">Monthly limit</string>
   <string name="codex_oauth_ports_unavailable">Codex sign-in cannot start because the local callback ports are in use. Close the app using them and try again.</string>
+
+  <!-- Phase 17: plan mode, auto-compaction, session search, gradient colors, queue, app icon -->
+  <string name="assistant_page_plan_mode">Plan mode</string>
+  <string name="assistant_page_plan_mode_desc">The assistant presents a numbered plan and asks for your approval before running side-effecting tools</string>
+  <string name="assistant_page_auto_compact">Auto-compact context</string>
+  <string name="assistant_page_auto_compact_desc">Automatically summarize older messages when the conversation grows past the token threshold, keeping recent messages intact</string>
+  <string name="assistant_page_auto_compact_threshold">Auto-compact threshold (tokens)</string>
+  <string name="assistant_page_auto_compact_threshold_desc">Compaction runs before the next reply once the estimated context exceeds this many tokens (minimum 1000)</string>
+  <string name="assistant_page_gradient_colors">Gradient colors</string>
+  <string name="assistant_page_gradient_colors_desc">Pick up to 4 colors for the animated background. No selection uses the built-in aurora</string>
+  <string name="assistant_page_gradient_colors_reset">Reset to default</string>
+  <string name="assistant_page_local_tools_session_search_title">Session search</string>
+  <string name="assistant_page_local_tools_session_search_desc">Let the assistant search all past conversations (full-text) and read matching ones to recall earlier context</string>
+  <string name="chat_page_queued_clear">Clear queued messages</string>
+  <string name="setting_display_page_app_icon">App icon</string>
+  <string name="setting_display_page_app_icon_default">Default</string>
+  <string name="setting_display_page_app_icon_default_desc">The original app icon. Changing the icon also changes the splash screen icon on Android 12+</string>
+  <string name="setting_display_page_app_icon_ocean">Ocean</string>
+  <string name="setting_display_page_app_icon_midnight">Midnight</string>
+  <string name="setting_display_page_app_icon_sunset">Sunset</string>
+  <plurals name="chat_page_queued_messages">
+    <item quantity="one">%d message queued</item>
+    <item quantity="other">%d messages queued</item>
+  </plurals>
 </resources>

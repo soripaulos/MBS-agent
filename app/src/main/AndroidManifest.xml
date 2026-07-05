@@ -153,11 +153,6 @@
       android:theme="@style/Theme.Rikkahub"
       android:windowSoftInputMode="adjustResize">
       <intent-filter>
-        <action android:name="android.intent.action.MAIN" />
-
-        <category android:name="android.intent.category.LAUNCHER" />
-      </intent-filter>
-      <intent-filter>
         <action android:name="android.intent.action.SEND" />
 
         <category android:name="android.intent.category.DEFAULT" />
@@ -176,6 +171,81 @@
         android:name="android.app.shortcuts"
         android:resource="@xml/shortcuts" />
     </activity>
+    <!-- Phase 17 — switchable launcher icons. The MAIN/LAUNCHER entry point lives on
+         activity-aliases (one per icon variant) instead of RouteActivity itself, so the
+         user can change the app icon at runtime: Settings toggles exactly one alias
+         enabled via PackageManager.setComponentEnabledSetting (see AppIconManager).
+         LauncherDefault is the manifest-enabled one; the variants start disabled.
+         On Android 12+ the system splash screen shows the launched alias' icon, so
+         switching the icon also switches the splash. -->
+    <activity-alias
+      android:name=".LauncherDefault"
+      android:enabled="true"
+      android:exported="true"
+      android:icon="@mipmap/ic_launcher"
+      android:label="@string/app_name"
+      android:targetActivity=".RouteActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+
+      <meta-data
+        android:name="android.app.shortcuts"
+        android:resource="@xml/shortcuts" />
+    </activity-alias>
+    <activity-alias
+      android:name=".LauncherOcean"
+      android:enabled="false"
+      android:exported="true"
+      android:icon="@mipmap/ic_launcher_ocean"
+      android:label="@string/app_name"
+      android:targetActivity=".RouteActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+
+      <meta-data
+        android:name="android.app.shortcuts"
+        android:resource="@xml/shortcuts" />
+    </activity-alias>
+    <activity-alias
+      android:name=".LauncherMidnight"
+      android:enabled="false"
+      android:exported="true"
+      android:icon="@mipmap/ic_launcher_midnight"
+      android:label="@string/app_name"
+      android:targetActivity=".RouteActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+
+      <meta-data
+        android:name="android.app.shortcuts"
+        android:resource="@xml/shortcuts" />
+    </activity-alias>
+    <activity-alias
+      android:name=".LauncherSunset"
+      android:enabled="false"
+      android:exported="true"
+      android:icon="@mipmap/ic_launcher_sunset"
+      android:label="@string/app_name"
+      android:targetActivity=".RouteActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+
+      <meta-data
+        android:name="android.app.shortcuts"
+        android:resource="@xml/shortcuts" />
+    </activity-alias>
     <activity
       android:name=".ui.activity.ShortcutHandlerActivity"
       android:exported="true"

@@ -1,13 +1,20 @@
 package me.rerere.rikkahub.ui.pages.assistant.detail
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -20,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,6 +36,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.buildAnnotatedString
@@ -46,6 +56,7 @@ import me.rerere.rikkahub.ui.components.ui.Select
 import me.rerere.rikkahub.ui.components.ui.TagsInput
 import me.rerere.rikkahub.ui.components.ui.UIAvatar
 import me.rerere.rikkahub.ui.hooks.heroAnimation
+import me.rerere.rikkahub.ui.pages.chat.parseHexColor
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.toFixed
 import org.koin.androidx.compose.koinViewModel
@@ -441,6 +452,64 @@ internal fun AssistantBasicContent(
             FormItem(
                 modifier = Modifier.padding(8.dp),
                 label = {
+                    Text(stringResource(R.string.assistant_page_plan_mode))
+                },
+                description = {
+                    Text(stringResource(R.string.assistant_page_plan_mode_desc))
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.planModeEnabled,
+                        onCheckedChange = {
+                            onUpdate(assistant.copy(planModeEnabled = it))
+                        }
+                    )
+                }
+            )
+            HorizontalDivider()
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
+                    Text(stringResource(R.string.assistant_page_auto_compact))
+                },
+                description = {
+                    Text(stringResource(R.string.assistant_page_auto_compact_desc))
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.autoCompactEnabled,
+                        onCheckedChange = {
+                            onUpdate(assistant.copy(autoCompactEnabled = it))
+                        }
+                    )
+                }
+            )
+            if (assistant.autoCompactEnabled) {
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_auto_compact_threshold))
+                    },
+                    description = {
+                        Text(stringResource(R.string.assistant_page_auto_compact_threshold_desc))
+                    }
+                ) {
+                    OutlinedTextField(
+                        value = assistant.autoCompactThresholdTokens.toString(),
+                        onValueChange = { text ->
+                            text.toIntOrNull()?.takeIf { it >= 1000 }?.let { tokens ->
+                                onUpdate(assistant.copy(autoCompactThresholdTokens = tokens))
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            HorizontalDivider()
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
                     Text(stringResource(R.string.assistant_page_thinking_budget))
                 },
             ) {
@@ -515,6 +584,28 @@ internal fun AssistantBasicContent(
                 }
             )
 
+            if (assistant.useGradientBackground) {
+                HorizontalDivider()
+                // Phase 17 — gradient palette editor: pick up to 4 colors that drive both
+                // the base gradient and the animated blobs; empty = built-in aurora.
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_gradient_colors))
+                    },
+                    description = {
+                        Text(stringResource(R.string.assistant_page_gradient_colors_desc))
+                    }
+                ) {
+                    GradientPalettePicker(
+                        selected = assistant.gradientColors,
+                        onUpdate = { colors ->
+                            onUpdate(assistant.copy(gradientColors = colors))
+                        }
+                    )
+                }
+            }
+
             if (!assistant.useGradientBackground) {
                 HorizontalDivider()
 
@@ -566,6 +657,83 @@ internal fun AssistantBasicContent(
                         color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.75f),
                     )
                 }
+            }
+        }
+    }
+}
+
+// Phase 17 — preset palette for the gradient background editor. Tapping a swatch toggles
+// it (ordered, max 4 selected); the small badge shows the color's position in the
+// gradient. "Reset" clears back to the built-in aurora.
+private val GRADIENT_PRESET_COLORS = listOf(
+    "#AFD0F2", "#3E6FB0", "#1B2A45", // blues
+    "#A8E6E0", "#2E7D74", "#0F4C46", // teals
+    "#FFC8D2", "#E86A8A", "#8E2F47", // pinks
+    "#D9C7F5", "#7C5F9E", "#3E2C5C", // purples
+    "#FFE3B3", "#E8A13E", "#8A5A18", // ambers
+    "#C9EDC4", "#5FA85A", "#2C5E2E", // greens
+    "#F2F2F2", "#8C8C8C", "#1A1A1A", // greys
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GradientPalettePicker(
+    selected: List<String>,
+    onUpdate: (List<String>) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GRADIENT_PRESET_COLORS.forEach { hex ->
+                val color = parseHexColor(hex) ?: return@forEach
+                val index = selected.indexOfFirst { it.equals(hex, ignoreCase = true) }
+                val isSelected = index >= 0
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(color)
+                        .border(
+                            width = if (isSelected) 3.dp else 1.dp,
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant
+                            },
+                            shape = CircleShape,
+                        )
+                        .clickable {
+                            onUpdate(
+                                if (isSelected) {
+                                    selected.filterNot { it.equals(hex, ignoreCase = true) }
+                                } else if (selected.size < 4) {
+                                    selected + hex
+                                } else {
+                                    selected
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isSelected) {
+                        Text(
+                            text = (index + 1).toString(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (color.luminance() > 0.5f) {
+                                androidx.compose.ui.graphics.Color.Black
+                            } else {
+                                androidx.compose.ui.graphics.Color.White
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        if (selected.isNotEmpty()) {
+            TextButton(onClick = { onUpdate(emptyList()) }) {
+                Text(stringResource(R.string.assistant_page_gradient_colors_reset))
             }
         }
     }

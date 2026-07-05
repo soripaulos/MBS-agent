@@ -5,9 +5,14 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AssistChip
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -43,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -316,6 +322,39 @@ private fun ChatPageContent(
                 )
             },
             bottomBar = {
+                Column {
+                    // Phase 17 — queued-messages chip: messages typed mid-generation are
+                    // held in ChatVM's queue and auto-sent as turns complete; this chip
+                    // surfaces the count and lets the user drop the queue.
+                    val queuedCount by vm.queuedMessageCount.collectAsStateWithLifecycle()
+                    if (queuedCount > 0) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            AssistChip(
+                                onClick = { vm.clearQueuedMessages() },
+                                label = {
+                                    Text(
+                                        pluralStringResource(
+                                            R.plurals.chat_page_queued_messages,
+                                            queuedCount,
+                                            queuedCount,
+                                        )
+                                    )
+                                },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = HugeIcons.Cancel01,
+                                        contentDescription = stringResource(R.string.chat_page_queued_clear),
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                },
+                            )
+                        }
+                    }
                 ChatInput(
                     state = inputState,
                     loading = loadingJob != null,
@@ -391,6 +430,7 @@ private fun ChatPageContent(
                         showFilesSheet = true
                     },
                 )
+                }
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->

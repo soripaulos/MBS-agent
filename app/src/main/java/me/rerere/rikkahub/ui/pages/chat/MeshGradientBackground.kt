@@ -35,6 +35,10 @@ import kotlin.math.sin
 @Composable
 fun MeshGradientBackground(
     modifier: Modifier = Modifier,
+    // Phase 17 — user-picked gradient palette (Assistant.gradientColors). Empty = the
+    // built-in blue/teal aurora below. 1..4 colors: first/last anchor the vertical base
+    // gradient (faded toward the background), and the animated blobs cycle the palette.
+    customColors: List<Color> = emptyList(),
     content: @Composable BoxScope.() -> Unit = {},
 ) {
     val transition = rememberInfiniteTransition(label = "aurora")
@@ -54,31 +58,54 @@ fun MeshGradientBackground(
     val p4 by phase(6_200, "p4")
 
     val dark = LocalDarkMode.current
-    val baseGradient = if (dark) {
-        // 暗色:顶部深蓝,向下渐隐到接近纯黑
-        arrayOf(
-            0.0f to Color(0xFF1B2A45),
-            0.22f to Color(0xFF15223A),
-            0.45f to Color(0xFF0D1626),
-            0.65f to Color(0xFF0A0F18),
-            1.0f to Color(0xFF080B12),
-        )
-    } else {
-        // 亮色:顶部偏蓝,向下渐隐到白
-        arrayOf(
-            0.0f to Color(0xFFAFD0F2),
-            0.22f to Color(0xFFCBE0F6),
-            0.45f to Color(0xFFF1F7FD),
-            0.65f to Color(0xFFFFFFFF),
-            1.0f to Color(0xFFFFFFFF),
-        )
+    val baseGradient = when {
+        // Phase 17 — custom palette: first color anchors the top, fading into the theme
+        // background tone toward the bottom (mirrors the built-in gradients' shape so
+        // chat content stays readable over the lower half of the screen).
+        customColors.isNotEmpty() -> {
+            val top = customColors.first()
+            val second = customColors.getOrElse(1) { top }
+            val fade = if (dark) Color(0xFF080B12) else Color(0xFFFFFFFF)
+            arrayOf(
+                0.0f to top,
+                0.30f to second.copy(alpha = 0.85f).compositeOverColor(fade),
+                0.65f to fade,
+                1.0f to fade,
+            )
+        }
+
+        dark -> {
+            // 暗色:顶部深蓝,向下渐隐到接近纯黑
+            arrayOf(
+                0.0f to Color(0xFF1B2A45),
+                0.22f to Color(0xFF15223A),
+                0.45f to Color(0xFF0D1626),
+                0.65f to Color(0xFF0A0F18),
+                1.0f to Color(0xFF080B12),
+            )
+        }
+
+        else -> {
+            // 亮色:顶部偏蓝,向下渐隐到白
+            arrayOf(
+                0.0f to Color(0xFFAFD0F2),
+                0.22f to Color(0xFFCBE0F6),
+                0.45f to Color(0xFFF1F7FD),
+                0.65f to Color(0xFFFFFFFF),
+                1.0f to Color(0xFFFFFFFF),
+            )
+        }
     }
 
-    // 光斑配色(蓝 / 青 / 淡蓝 / 暖色)及浓度,亮暗各一套
-    val blobBlue = if (dark) Color(0xFF3E6FB0) else Color(0xFF9EC5F0)
-    val blobTeal = if (dark) Color(0xFF2E7D74) else Color(0xFFA8E6E0)
-    val blobLightBlue = if (dark) Color(0xFF4A6E96) else Color(0xFFB6D7F2)
-    val blobWarm = if (dark) Color(0xFF7C5F9E) else Color(0xFFFFC8D2)
+    // 光斑配色(蓝 / 青 / 淡蓝 / 暖色)及浓度,亮暗各一套。
+    // Phase 17 — with a custom palette the blobs cycle the picked colors instead.
+    val blobBlue = customColors.getOrNull(0) ?: if (dark) Color(0xFF3E6FB0) else Color(0xFF9EC5F0)
+    val blobTeal = customColors.getOrNull(1) ?: customColors.getOrNull(0)
+        ?: if (dark) Color(0xFF2E7D74) else Color(0xFFA8E6E0)
+    val blobLightBlue = customColors.getOrNull(2) ?: customColors.getOrNull(0)
+        ?: if (dark) Color(0xFF4A6E96) else Color(0xFFB6D7F2)
+    val blobWarm = customColors.getOrNull(3) ?: customColors.getOrNull(1) ?: customColors.getOrNull(0)
+        ?: if (dark) Color(0xFF7C5F9E) else Color(0xFFFFC8D2)
     val alphaBlue = if (dark) 0.56f else 0.72f
     val alphaTeal = if (dark) 0.44f else 0.56f
     val alphaLightBlue = if (dark) 0.48f else 0.62f
@@ -140,6 +167,17 @@ fun MeshGradientBackground(
 
         content()
     }
+}
+
+/** Composite this (possibly translucent) color over an opaque backdrop. */
+private fun Color.compositeOverColor(backdrop: Color): Color {
+    val a = alpha
+    return Color(
+        red = red * a + backdrop.red * (1 - a),
+        green = green * a + backdrop.green * (1 - a),
+        blue = blue * a + backdrop.blue * (1 - a),
+        alpha = 1f,
+    )
 }
 
 /** 画一个柔光斑:中心有色,向外渐隐到透明。 */

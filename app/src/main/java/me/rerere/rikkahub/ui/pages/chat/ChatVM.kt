@@ -12,6 +12,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -76,6 +77,13 @@ class ChatVM(
         .getConversationJobs()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    // Phase 17 — message queue: messages typed while a generation is running are held
+    // here (FIFO) and auto-sent one at a time as each turn completes, instead of being
+    // dropped or cancelling the in-flight turn (Hermes queue parity).
+    private val _queuedMessages = MutableStateFlow<List<List<UIMessagePart>>>(emptyList())
+    val queuedMessageCount: StateFlow<Int> =
+        _queuedMessages.map { it.size }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
     init {
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
@@ -85,8 +93,30 @@ class ChatVM(
             chatService.initializeConversation(_conversationId)
         }
 
+        // Phase 17 — drain the message queue: when the running job transitions to
+        // null/inactive and something is queued, pop the head and send it. sendMessage
+        // spins up a new job, which flips conversationJob back to active until that turn
+        // finishes — so this collector naturally sends one queued message per completed
+        // turn without extra bookkeeping.
+        viewModelScope.launch {
+            conversationJob.collect { job ->
+                if (job == null || !job.isActive) {
+                    val queued = _queuedMessages.value
+                    if (queued.isNotEmpty()) {
+                        _queuedMessages.value = queued.drop(1)
+                        chatService.sendMessage(_conversationId, queued.first())
+                    }
+                }
+            }
+        }
+
         // 记住对话ID, 方便下次启动恢复
         context.writeStringPreference("lastConversationId", _conversationId.toString())
+    }
+
+    /** Phase 17 — drop all queued (not-yet-sent) messages. */
+    fun clearQueuedMessages() {
+        _queuedMessages.value = emptyList()
     }
 
     override fun onCleared() {
@@ -172,6 +202,14 @@ class ChatVM(
      */
     fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
         if (content.isEmptyInputMessage()) return
+
+        // Phase 17 — if a generation is in flight, queue instead of cancelling it
+        // (ChatService.sendMessage cancels the previous job by design). Queued messages
+        // are drained one per completed turn by the collector in init.
+        if (answer && conversationJob.value?.isActive == true) {
+            _queuedMessages.value = _queuedMessages.value + listOf(content)
+            return
+        }
 
         chatService.sendMessage(_conversationId, content, answer)
     }

@@ -175,6 +175,13 @@ object ToolApprovalDefaults {
         "skill_install_from_url",
         "skill_install_from_text",
 
+        // Skill self-editing (Phase 17) — the model persists / patches its own skills.
+        // Writes to disk and the content rides into future system prompts, so per-call
+        // approval by default. Unlike the install tools this IS "Always allow"-eligible:
+        // the content comes from the model's own session work the user just watched, not
+        // from an arbitrary URL.
+        "skill_manage",
+
         // JS skills (Phase 18) — run a skill's JavaScript inside a hidden WebView.
         // The script can issue arbitrary network requests on behalf of the user, so
         // every invocation gets per-call approval. Eligible for "Always allow" once a

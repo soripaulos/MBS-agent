@@ -305,6 +305,9 @@ class GenerationHandler(
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
         workspaceCwd: String? = null,
+        // Phase 17 — AGENT.md harness file read from the assistant's workspace (Hermes
+        // AGENTS.md parity). Appended to the stable prompt section; null/blank = absent.
+        workspaceAgentPrompt: String? = null,
     ): Flow<GenerationChunk> = flow {
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")
         val providerImpl = providerManager.getProviderByType(provider)
@@ -441,6 +444,7 @@ class GenerationHandler(
                         conversationModeInjectionIds = conversationModeInjectionIds,
                         conversationLorebookIds = conversationLorebookIds,
                         workspaceCwd = workspaceCwd,
+                        workspaceAgentPrompt = workspaceAgentPrompt,
                     )
                 } catch (t: Throwable) {
                     // CancellationException is honoured verbatim — stopGeneration has its
@@ -953,16 +957,33 @@ class GenerationHandler(
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
         workspaceCwd: String? = null,
+        workspaceAgentPrompt: String? = null,
     ) {
         val internalMessages = buildList {
             // Conversation-level system prompt override (upstream): when the assistant
             // allows it and the conversation supplies one, it replaces the assistant prompt.
-            val effectiveSystemPrompt =
+            val baseSystemPrompt =
                 if (assistant.allowConversationSystemPrompt && !conversationSystemPrompt.isNullOrBlank()) {
                     conversationSystemPrompt
                 } else {
                     assistant.systemPrompt
                 }
+            // Phase 17 — harness sections layered onto the assistant prompt, both stable
+            // across turns so they live in the cached prefix: plan-mode contract, then the
+            // workspace's AGENT.md instructions (changes only when the file changes).
+            val effectiveSystemPrompt = buildString {
+                append(baseSystemPrompt)
+                if (assistant.planModeEnabled) {
+                    appendLine()
+                    append(PLAN_MODE_PROMPT)
+                }
+                if (!workspaceAgentPrompt.isNullOrBlank()) {
+                    appendLine()
+                    appendLine()
+                    appendLine("**Workspace instructions (AGENT.md)**")
+                    append(workspaceAgentPrompt.trim())
+                }
+            }
             val memoryPrompt = if (assistant.enableMemory) {
                 buildMemoryPrompt(memories = memories)
             } else ""

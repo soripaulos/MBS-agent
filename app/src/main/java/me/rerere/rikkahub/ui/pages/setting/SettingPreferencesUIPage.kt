@@ -17,6 +17,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -55,6 +56,8 @@ import me.rerere.rikkahub.ui.components.ui.Select
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.ui.theme.rememberChatFontFamily
+import me.rerere.rikkahub.utils.AppIconManager
+import me.rerere.rikkahub.utils.AppIconVariant
 import me.rerere.rikkahub.utils.plus
 import org.koin.androidx.compose.koinViewModel
 import java.io.File
@@ -406,8 +409,43 @@ fun SettingPreferencesUIPage(vm: SettingVM = koinViewModel()) {
                     )
                 }
             }
+            item {
+                // Phase 17 — switchable app icon (+ splash icon on Android 12+). Backed
+                // by activity-aliases; see AppIconManager for the switching mechanics.
+                var currentIcon by remember { mutableStateOf(AppIconManager.currentVariant(context)) }
+                CardGroup(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    title = { Text(stringResource(R.string.setting_display_page_app_icon)) },
+                ) {
+                    AppIconVariant.entries.forEach { variant ->
+                        item(
+                            headlineContent = { Text(variant.labelUI()) },
+                            supportingContent = if (variant == AppIconVariant.DEFAULT) {
+                                { Text(stringResource(R.string.setting_display_page_app_icon_default_desc)) }
+                            } else null,
+                            trailingContent = {
+                                RadioButton(
+                                    selected = currentIcon == variant,
+                                    onClick = {
+                                        AppIconManager.setVariant(context, variant)
+                                        currentIcon = variant
+                                    }
+                                )
+                            },
+                        )
+                    }
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun AppIconVariant.labelUI(): String = when (this) {
+    AppIconVariant.DEFAULT -> stringResource(R.string.setting_display_page_app_icon_default)
+    AppIconVariant.OCEAN -> stringResource(R.string.setting_display_page_app_icon_ocean)
+    AppIconVariant.MIDNIGHT -> stringResource(R.string.setting_display_page_app_icon_midnight)
+    AppIconVariant.SUNSET -> stringResource(R.string.setting_display_page_app_icon_sunset)
 }
 
 private val CustomFontMimeTypesUI = arrayOf(
