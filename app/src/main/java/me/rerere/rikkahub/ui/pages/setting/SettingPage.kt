@@ -372,6 +372,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                     title = { Text(stringResource(R.string.setting_page_about)) },
                 ) {
                     item(
+                        onClick = { navController.navigate(Screen.SettingDocs) },
+                        leadingContent = { Icon(HugeIcons.Book01, null) },
+                        headlineContent = { Text(stringResource(R.string.setting_page_docs)) },
+                        supportingContent = { Text(stringResource(R.string.setting_page_docs_desc)) },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.SettingAbout) },
                         leadingContent = { Icon(HugeIcons.Clapping01, null) },
                         supportingContent = { Text(stringResource(R.string.setting_page_about_desc)) },

@@ -452,6 +452,24 @@ internal fun AssistantBasicContent(
             FormItem(
                 modifier = Modifier.padding(8.dp),
                 label = {
+                    Text(stringResource(R.string.assistant_page_smart_mode))
+                },
+                description = {
+                    Text(stringResource(R.string.assistant_page_smart_mode_desc))
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.smartModeEnabled,
+                        onCheckedChange = {
+                            onUpdate(assistant.copy(smartModeEnabled = it))
+                        }
+                    )
+                }
+            )
+            HorizontalDivider()
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
                     Text(stringResource(R.string.assistant_page_plan_mode))
                 },
                 description = {

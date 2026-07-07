@@ -1837,4 +1837,14 @@
     <item quantity="one">%d message queued</item>
     <item quantity="other">%d messages queued</item>
   </plurals>
+
+  <!-- Phase 18: smart mode, self-configuration tools, in-app docs -->
+  <string name="assistant_page_smart_mode">Smart mode (autopilot)</string>
+  <string name="assistant_page_smart_mode_desc">Proactively classifies your request, recalls from memory/skills/past chats before re-deriving, files information and journals automatically, saves reusable skills, and can configure itself — asking when it needs guidance. Best with memory, session search, and agent config enabled</string>
+  <string name="assistant_page_local_tools_agent_config_title">Self-configuration</string>
+  <string name="assistant_page_local_tools_agent_config_desc">Let the assistant read and change its own settings (enable tools/skills, toggle memory/plan/smart mode) and create new assistants from chat, with your approval</string>
+  <string name="assistant_page_local_tools_app_docs_title">In-app help</string>
+  <string name="assistant_page_local_tools_app_docs_desc">Let the assistant read the built-in user guide so it can accurately answer how-to questions about the app\'s own features</string>
+  <string name="setting_page_docs">User guide</string>
+  <string name="setting_page_docs_desc">How to use assistants, skills, memory, tools, and everything else</string>
 </resources>

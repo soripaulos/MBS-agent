@@ -182,6 +182,12 @@ object ToolApprovalDefaults {
         // from an arbitrary URL.
         "skill_manage",
 
+        // Self-configuration (Phase 18) — the model changes the app's own settings or
+        // creates an assistant from chat. Persistent config changes, so the approval card
+        // shows the diff first. get_agent_config is a pure read and stays out.
+        "set_agent_config",
+        "create_assistant",
+
         // JS skills (Phase 18) — run a skill's JavaScript inside a hidden WebView.
         // The script can issue arbitrary network requests on behalf of the user, so
         // every invocation gets per-call approval. Eligible for "Always allow" once a

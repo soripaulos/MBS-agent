@@ -917,6 +917,34 @@ private fun AssistantLocalToolContent(
             )
             item(
                 headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_agent_config_title))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_agent_config_desc))
+                },
+                trailingContent = {
+                    PermissionedSwitch(
+                        checked = assistant.localTools.contains(LocalToolOption.AgentConfig),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.AgentConfig, it) }
+                    )
+                }
+            )
+            item(
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_app_docs_title))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_app_docs_desc))
+                },
+                trailingContent = {
+                    PermissionedSwitch(
+                        checked = assistant.localTools.contains(LocalToolOption.AppDocs),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.AppDocs, it) }
+                    )
+                }
+            )
+            item(
+                headlineContent = {
                     Text(stringResource(R.string.assistant_page_local_tools_workflows_title))
                 },
                 supportingContent = {

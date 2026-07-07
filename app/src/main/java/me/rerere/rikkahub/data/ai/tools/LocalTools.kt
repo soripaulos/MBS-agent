@@ -190,6 +190,10 @@ sealed class LocalToolOption {
     // Phase 17 — cross-session recall (Hermes session_search parity).
     @Serializable @SerialName("session_search")       data object SessionSearch       : LocalToolOption()
 
+    // Phase 18 — self-configuration + in-app docs (chat-driven settings changes, how-to).
+    @Serializable @SerialName("agent_config")         data object AgentConfig         : LocalToolOption()
+    @Serializable @SerialName("app_docs")             data object AppDocs             : LocalToolOption()
+
     // Phase 25 — Phase 3 second cut + ExternalStorage + Archive.
     @Serializable @SerialName("sms_send")             data object SmsSend             : LocalToolOption()
     @Serializable @SerialName("wallpaper")            data object Wallpaper           : LocalToolOption()
@@ -198,6 +202,104 @@ sealed class LocalToolOption {
     @Serializable @SerialName("external_storage")     data object ExternalStorage     : LocalToolOption()
     @Serializable @SerialName("archive")              data object Archive             : LocalToolOption()
     @Serializable @SerialName("keyboard_control")     data object KeyboardControl     : LocalToolOption()
+}
+
+/**
+ * Phase 18 — name<->option registry for the self-configuration tools (set_agent_config /
+ * create_assistant). The serialized `@SerialName` strings are the stable public names the
+ * LLM uses to enable/disable tool categories from chat. Kept as an explicit list rather
+ * than reflection so a new option is a compile-time addition here, right next to the enum.
+ */
+object LocalToolOptionCatalog {
+    val all: List<LocalToolOption> = listOf(
+        LocalToolOption.JavascriptEngine, LocalToolOption.TimeInfo, LocalToolOption.Clipboard,
+        LocalToolOption.Tts, LocalToolOption.AskUser, LocalToolOption.Battery,
+        LocalToolOption.AudioInfo, LocalToolOption.TelephonyInfo, LocalToolOption.WifiInfo,
+        LocalToolOption.Sensors, LocalToolOption.StorageInfo, LocalToolOption.Toast,
+        LocalToolOption.Notification, LocalToolOption.Share, LocalToolOption.Torch,
+        LocalToolOption.Vibrate, LocalToolOption.Brightness, LocalToolOption.Volume,
+        LocalToolOption.MediaPlayer, LocalToolOption.MediaScanner, LocalToolOption.Download,
+        LocalToolOption.Location, LocalToolOption.Contacts, LocalToolOption.CallLog,
+        LocalToolOption.SmsInbox, LocalToolOption.CameraPhoto, LocalToolOption.MicRecorder,
+        LocalToolOption.SpeechToText, LocalToolOption.Fingerprint, LocalToolOption.CronJobs,
+        LocalToolOption.Ssh, LocalToolOption.TelegramBot, LocalToolOption.ScreenAutomation,
+        LocalToolOption.AppLauncher, LocalToolOption.Termux, LocalToolOption.NotificationListener,
+        LocalToolOption.Files, LocalToolOption.McpControl, LocalToolOption.ExternalAutomation,
+        LocalToolOption.Reliability, LocalToolOption.SubAgents, LocalToolOption.CostGuards,
+        LocalToolOption.Workflows, LocalToolOption.SkillImport, LocalToolOption.JsSkills,
+        LocalToolOption.SystemIntents, LocalToolOption.Browser, LocalToolOption.WebFetch,
+        LocalToolOption.SessionSearch, LocalToolOption.AgentConfig, LocalToolOption.AppDocs,
+        LocalToolOption.SmsSend, LocalToolOption.Wallpaper,
+        LocalToolOption.Keystore, LocalToolOption.Nfc, LocalToolOption.ExternalStorage,
+        LocalToolOption.Archive, LocalToolOption.KeyboardControl,
+    )
+
+    private val byName: Map<String, LocalToolOption> = all.associateBy { serialNameOf(it) }
+
+    val serialNames: List<String> = all.map { serialNameOf(it) }
+
+    fun fromSerialName(name: String): LocalToolOption? = byName[name]
+
+    fun serialNameOf(option: LocalToolOption): String = when (option) {
+        LocalToolOption.JavascriptEngine -> "javascript_engine"
+        LocalToolOption.TimeInfo -> "time_info"
+        LocalToolOption.Clipboard -> "clipboard"
+        LocalToolOption.Tts -> "tts"
+        LocalToolOption.AskUser -> "ask_user"
+        LocalToolOption.Battery -> "battery"
+        LocalToolOption.AudioInfo -> "audio_info"
+        LocalToolOption.TelephonyInfo -> "telephony_info"
+        LocalToolOption.WifiInfo -> "wifi_info"
+        LocalToolOption.Sensors -> "sensors"
+        LocalToolOption.StorageInfo -> "storage_info"
+        LocalToolOption.Toast -> "toast"
+        LocalToolOption.Notification -> "notification"
+        LocalToolOption.Share -> "share"
+        LocalToolOption.Torch -> "torch"
+        LocalToolOption.Vibrate -> "vibrate"
+        LocalToolOption.Brightness -> "brightness"
+        LocalToolOption.Volume -> "volume"
+        LocalToolOption.MediaPlayer -> "media_player"
+        LocalToolOption.MediaScanner -> "media_scanner"
+        LocalToolOption.Download -> "download"
+        LocalToolOption.Location -> "location"
+        LocalToolOption.Contacts -> "contacts"
+        LocalToolOption.CallLog -> "call_log"
+        LocalToolOption.SmsInbox -> "sms_inbox"
+        LocalToolOption.CameraPhoto -> "camera_photo"
+        LocalToolOption.MicRecorder -> "mic_recorder"
+        LocalToolOption.SpeechToText -> "speech_to_text"
+        LocalToolOption.Fingerprint -> "fingerprint"
+        LocalToolOption.CronJobs -> "cron_jobs"
+        LocalToolOption.Ssh -> "ssh"
+        LocalToolOption.TelegramBot -> "telegram_bot"
+        LocalToolOption.ScreenAutomation -> "screen_automation"
+        LocalToolOption.AppLauncher -> "app_launcher"
+        LocalToolOption.Termux -> "termux"
+        LocalToolOption.NotificationListener -> "notification_listener"
+        LocalToolOption.Files -> "files"
+        LocalToolOption.McpControl -> "mcp_control"
+        LocalToolOption.ExternalAutomation -> "external_automation"
+        LocalToolOption.Reliability -> "reliability"
+        LocalToolOption.SubAgents -> "sub_agents"
+        LocalToolOption.CostGuards -> "cost_guards"
+        LocalToolOption.Workflows -> "workflows"
+        LocalToolOption.SkillImport -> "skill_import"
+        LocalToolOption.JsSkills -> "js_skills"
+        LocalToolOption.SystemIntents -> "system_intents"
+        LocalToolOption.Browser -> "browser"
+        LocalToolOption.WebFetch -> "web_fetch"
+        LocalToolOption.SessionSearch -> "session_search"
+        LocalToolOption.AgentConfig -> "agent_config"
+        LocalToolOption.AppDocs -> "app_docs"
+        LocalToolOption.SmsSend -> "sms_send"
+        LocalToolOption.Wallpaper -> "wallpaper"
+        LocalToolOption.Keystore -> "keystore"
+        LocalToolOption.Nfc -> "nfc"
+        LocalToolOption.ExternalStorage -> "external_storage"
+        LocalToolOption.Archive -> "archive"
+        LocalToolOption.KeyboardControl -> "keyboard_control"
+    }
 }
 
 private val TOP_TOOL_EXAMPLES: Map<String, String> = mapOf(
@@ -910,6 +1012,12 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.SessionSearch)) {
             tools.addAll(createSessionSearchTools(conversationRepo))
+        }
+        if (options.contains(LocalToolOption.AgentConfig)) {
+            tools.addAll(createAgentConfigTools(settingsStore, invocationContext))
+        }
+        if (options.contains(LocalToolOption.AppDocs)) {
+            tools.add(createAppDocsTool(context))
         }
         if (options.contains(LocalToolOption.SkillImport)) {
             tools.add(me.rerere.rikkahub.skills.skillInstallFromUrlTool(skillUrlImporter, settingsStore, skillManager))

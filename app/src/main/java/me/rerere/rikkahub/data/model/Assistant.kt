@@ -81,6 +81,13 @@ data class Assistant(
     // Phase 17 — custom gradient background colors (hex strings "#RRGGBB" or "#AARRGGBB").
     // Empty = built-in animated mesh gradient. Only used when [useGradientBackground] is on.
     val gradientColors: List<String> = emptyList(),
+    // Phase 18 — Smart Autopilot. When ON, a policy section is prepended that makes the
+    // assistant classify each request, recall from memory/skills/past sessions before
+    // re-deriving, silently file information into the right memory kind (incl. journals /
+    // tasks), persist reusable procedures as skills, and self-configure tools/skills — all
+    // while asking for guidance when genuinely uncertain rather than assuming. Best paired
+    // with enableMemory + session_search + skill_import + agent_config tools enabled.
+    val smartModeEnabled: Boolean = false,
 )
 
 @Serializable

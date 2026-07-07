@@ -968,10 +968,16 @@ class GenerationHandler(
                 } else {
                     assistant.systemPrompt
                 }
-            // Phase 17 — harness sections layered onto the assistant prompt, both stable
-            // across turns so they live in the cached prefix: plan-mode contract, then the
-            // workspace's AGENT.md instructions (changes only when the file changes).
+            // Phase 17/18 — harness sections layered onto the assistant prompt, all stable
+            // across turns so they live in the cached prefix: smart-mode policy (first, so
+            // it frames everything), then persona, plan-mode contract, then the workspace's
+            // AGENT.md instructions (changes only when the file changes).
             val effectiveSystemPrompt = buildString {
+                if (assistant.smartModeEnabled) {
+                    append(SMART_MODE_PROMPT)
+                    appendLine()
+                    appendLine()
+                }
                 append(baseSystemPrompt)
                 if (assistant.planModeEnabled) {
                     appendLine()
