@@ -187,6 +187,7 @@ object ToolApprovalDefaults {
         // shows the diff first. get_agent_config is a pure read and stays out.
         "set_agent_config",
         "create_assistant",
+        "manage_prompt_shaping",
 
         // JS skills (Phase 18) — run a skill's JavaScript inside a hidden WebView.
         // The script can issue arbitrary network requests on behalf of the user, so

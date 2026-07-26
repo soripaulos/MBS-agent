@@ -133,6 +133,50 @@ private fun List<UIMessage>.ageOldToolImages(): List<UIMessage> {
     }.asReversed()
 }
 
+// Phase 20 — mid-turn text compaction: how many recent tool-result-bearing assistant
+// messages keep their FULL tool output text, and how many chars older ones retain. This is
+// the fix for "long agent task hits the token limit after a few minutes": in a multi-step
+// turn every prior step's full tool output was replayed to the provider on every
+// subsequent step, so context grew quadratically with step count. Older outputs have
+// already been consumed by the model when they were fresh; an excerpt is enough for
+// reference, and the full text of truncated shell outputs is on disk (see
+// maybeTruncateToolOutput's /tool_outputs files).
+private const val TOOL_TEXT_KEEP_LAST_N_RESULTS = 8
+private const val OLD_TOOL_TEXT_KEEP_CHARS = 1500
+
+/**
+ * Text analog of [ageOldToolImages]: keep the last [TOOL_TEXT_KEEP_LAST_N_RESULTS]
+ * tool-result-bearing assistant messages verbatim; excerpt older tool output text down to
+ * [OLD_TOOL_TEXT_KEEP_CHARS] chars. USER messages are never touched.
+ */
+private fun List<UIMessage>.compactOldToolText(): List<UIMessage> {
+    var toolResultsSeen = 0
+    return this.asReversed().map { msg ->
+        if (msg.role == MessageRole.USER) return@map msg
+        val hasToolOutput = msg.parts.any { p ->
+            p is UIMessagePart.Tool && p.output.isNotEmpty()
+        }
+        if (!hasToolOutput) return@map msg
+        toolResultsSeen++
+        if (toolResultsSeen <= TOOL_TEXT_KEEP_LAST_N_RESULTS) return@map msg
+        val newParts = msg.parts.map { part ->
+            if (part is UIMessagePart.Tool) {
+                val newOutput = part.output.map { o ->
+                    if (o is UIMessagePart.Text && o.text.length > OLD_TOOL_TEXT_KEEP_CHARS) {
+                        UIMessagePart.Text(
+                            o.text.take(OLD_TOOL_TEXT_KEEP_CHARS) +
+                                "\n[older tool output compacted: ${o.text.length} chars total; " +
+                                "already consumed in earlier steps]"
+                        )
+                    } else o
+                }
+                part.copy(output = newOutput)
+            } else part
+        }
+        msg.copy(parts = newParts)
+    }.asReversed()
+}
+
 @Serializable
 sealed interface GenerationChunk {
     data class Messages(
@@ -1014,7 +1058,11 @@ class GenerationHandler(
             if (systemParts.isNotEmpty()) {
                 add(UIMessage(role = MessageRole.SYSTEM, parts = systemParts))
             }
-            addAll(messages.limitContext(assistant.contextMessageSize).ageOldToolImages())
+            addAll(
+                messages.limitContext(assistant.contextMessageSize)
+                    .ageOldToolImages()
+                    .compactOldToolText()
+            )
         }.transforms(
             transformers = transformers,
             context = context,

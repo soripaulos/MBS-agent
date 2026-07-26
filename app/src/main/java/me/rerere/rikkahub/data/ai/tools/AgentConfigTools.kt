@@ -54,6 +54,18 @@ fun createAgentConfigTools(
         )
     )
 
+    fun ok(action: String, name: String, extra: Map<String, String> = emptyMap()): List<UIMessagePart> =
+        listOf(
+            UIMessagePart.Text(
+                buildJsonObject {
+                    put("ok", true)
+                    put("action", action)
+                    put("name", name)
+                    extra.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
+                }.toString()
+            )
+        )
+
     val getConfig = Tool(
         name = "get_agent_config",
         description = """
@@ -273,5 +285,140 @@ fun createAgentConfigTools(
         }
     )
 
-    return listOf(getConfig, setConfig, createAssistant)
+    // Phase 20 — prompt-shaping from chat: the model can create quick messages, mode
+    // injections, and lorebooks itself (and attach them to the caller assistant), so the
+    // user never has to hand-author them in Settings. Approval-gated like set_agent_config.
+    val managePromptShaping = Tool(
+        name = "manage_prompt_shaping",
+        description = """
+            Create prompt-shaping objects and attach them to the current assistant.
+            Actions:
+            - add_quick_message: title + content — a saved input snippet the user can tap.
+            - add_mode_injection: name + content — instructions force-added to the prompt
+              every turn while attached (a toggleable "mode"). Attached to this assistant.
+            - add_lorebook: name + description + entries — keyword-triggered reference
+              snippets, injected only when a keyword appears in recent conversation.
+              entries is an array of { keywords: [strings], content: string }.
+              Attached to this assistant.
+            Use read_app_docs section "prompt shaping" for when to use which. Requires
+            user approval.
+        """.trimIndent().replace("\n", " "),
+        parameters = {
+            InputSchema.Obj(
+                properties = buildJsonObject {
+                    put("action", buildJsonObject {
+                        put("type", "string")
+                        put(
+                            "enum",
+                            buildJsonArray {
+                                add("add_quick_message")
+                                add("add_mode_injection")
+                                add("add_lorebook")
+                            }
+                        )
+                    })
+                    put("name", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Title of the quick message / injection / lorebook")
+                    })
+                    put("content", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Body text (quick message content or injection instructions)")
+                    })
+                    put("description", buildJsonObject {
+                        put("type", "string")
+                        put("description", "add_lorebook only: what this lorebook covers")
+                    })
+                    put("entries", buildJsonObject {
+                        put("type", "array")
+                        put("description", "add_lorebook only: [{keywords:[..], content:\"..\"}]")
+                    })
+                },
+                required = listOf("action", "name")
+            )
+        },
+        needsApproval = { true },
+        execute = { input ->
+            val params = input.jsonObject
+            val action = params["action"]?.jsonPrimitive?.contentOrNull
+                ?: return@Tool err("missing_action", "action is required")
+            val name = params["name"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+                ?: return@Tool err("missing_name", "name is required")
+            val content = params["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val assistantId = resolveAssistantId()
+                ?: return@Tool err("no_assistant", "could not resolve the current assistant")
+
+            when (action) {
+                "add_quick_message" -> {
+                    if (content.isBlank()) return@Tool err("missing_content", "quick message needs content")
+                    val qm = me.rerere.rikkahub.data.model.QuickMessage(title = name, content = content)
+                    settingsStore.update { current ->
+                        current.copy(
+                            quickMessages = current.quickMessages + qm,
+                            assistants = current.assistants.map { a ->
+                                if (a.id == assistantId) a.copy(quickMessageIds = a.quickMessageIds + qm.id) else a
+                            }
+                        )
+                    }
+                    ok("add_quick_message", name)
+                }
+
+                "add_mode_injection" -> {
+                    if (content.isBlank()) return@Tool err("missing_content", "mode injection needs content")
+                    val injection = me.rerere.rikkahub.data.model.PromptInjection.ModeInjection(
+                        name = name,
+                        content = content,
+                    )
+                    settingsStore.update { current ->
+                        current.copy(
+                            modeInjections = current.modeInjections + injection,
+                            assistants = current.assistants.map { a ->
+                                if (a.id == assistantId) a.copy(modeInjectionIds = a.modeInjectionIds + injection.id) else a
+                            }
+                        )
+                    }
+                    ok("add_mode_injection", name, mapOf("detail" to "Attached to the current assistant; toggle in Assistant settings."))
+                }
+
+                "add_lorebook" -> {
+                    val entriesJson = params["entries"] as? kotlinx.serialization.json.JsonArray
+                        ?: return@Tool err("missing_entries", "add_lorebook requires an entries array")
+                    val entries = entriesJson.mapNotNull { el ->
+                        val obj = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                        val keywords = (obj["keywords"] as? kotlinx.serialization.json.JsonArray)
+                            ?.mapNotNull { it.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank) }
+                            .orEmpty()
+                        val entryContent = obj["content"]?.jsonPrimitive?.contentOrNull
+                        if (keywords.isEmpty() || entryContent.isNullOrBlank()) null
+                        else me.rerere.rikkahub.data.model.PromptInjection.RegexInjection(
+                            name = keywords.first(),
+                            content = entryContent,
+                            keywords = keywords,
+                        )
+                    }
+                    if (entries.isEmpty()) {
+                        return@Tool err("invalid_entries", "no valid entries (each needs keywords[] + content)")
+                    }
+                    val lorebook = me.rerere.rikkahub.data.model.Lorebook(
+                        name = name,
+                        description = params["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                        entries = entries,
+                    )
+                    settingsStore.update { current ->
+                        current.copy(
+                            lorebooks = current.lorebooks + lorebook,
+                            assistants = current.assistants.map { a ->
+                                if (a.id == assistantId) a.copy(lorebookIds = a.lorebookIds + lorebook.id) else a
+                            }
+                        )
+                    }
+                    ok("add_lorebook", name, mapOf("entries" to entries.size.toString()))
+                }
+
+                else -> err("unknown_action", "action must be add_quick_message / add_mode_injection / add_lorebook")
+            }
+        }
+    )
+
+    return listOf(getConfig, setConfig, createAssistant, managePromptShaping)
 }

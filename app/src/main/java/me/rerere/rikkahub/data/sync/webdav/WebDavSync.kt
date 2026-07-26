@@ -27,6 +27,10 @@ import java.util.zip.ZipOutputStream
 
 private const val TAG = "WebDavSync"
 
+// Phase 20 — per-file cap for the full-backup extras (a stray multi-hundred-MB blob in
+// filesDir must not balloon the zip; DBs/skills/uploads are handled by their own paths).
+private const val FULL_BACKUP_MAX_FILE_BYTES = 128L * 1024 * 1024
+
 class WebDavSync(
     private val settingsStore: SettingsStore,
     private val json: Json,
@@ -134,7 +138,15 @@ class WebDavSync(
         }
     }
 
-    suspend fun prepareBackupFile(config: WebDavConfig): File = withContext(Dispatchers.IO) {
+    suspend fun prepareBackupFile(
+        config: WebDavConfig,
+        // Phase 20 — full backup: additionally zips every DataStore preferences file
+        // (tool approvals, termux/browser/telegram/notification prefs — none of which live
+        // in settings.json), shared_prefs, and the rest of filesDir (minus rebuildable or
+        // huge trees like workspace rootfs). Used by the local Export/Import tab so a
+        // single zip round-trips the entire app state.
+        includeEverything: Boolean = false,
+    ): File = withContext(Dispatchers.IO) {
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
         val backupFile = File(context.cacheDir, "backup_$timestamp.zip")
 
@@ -209,6 +221,33 @@ class WebDavSync(
                     }
                 } else {
                     Log.w(TAG, "prepareBackupFile: Fonts folder does not exist or is not a directory")
+                }
+            }
+
+            if (includeEverything) {
+                val dataDir = context.filesDir.parentFile
+                // DataStore .preferences_pb files: everything configured outside Settings
+                // (tool approvals, termux/browser/notification/telegram prefs, ...).
+                val datastoreDir = File(dataDir, "datastore")
+                if (datastoreDir.isDirectory) {
+                    addDirectoryToZipFiltered(zipOut, datastoreDir, "appdata/datastore/")
+                }
+                val sharedPrefsDir = File(dataDir, "shared_prefs")
+                if (sharedPrefsDir.isDirectory) {
+                    addDirectoryToZipFiltered(zipOut, sharedPrefsDir, "appdata/shared_prefs/")
+                }
+                // The rest of filesDir not covered above. Deny rebuildable / multi-GB trees
+                // (workspace rootfs, local model weights) and cap individual files so one
+                // stray blob can't balloon the zip.
+                val covered = setOf(FileFolders.UPLOAD, FileFolders.SKILLS, FileFolders.FONTS)
+                val denied = setOf("rootfs", "workspace", "workspaces", "models", "local-llm", "llm")
+                context.filesDir.listFiles()?.forEach { child ->
+                    if (child.name in covered || child.name in denied) return@forEach
+                    if (child.isDirectory) {
+                        addDirectoryToZipFiltered(zipOut, child, "appdata/files/${child.name}/")
+                    } else if (child.isFile && child.length() <= FULL_BACKUP_MAX_FILE_BYTES) {
+                        addFileToZip(zipOut, child, "appdata/files/${child.name}")
+                    }
                 }
             }
         }
@@ -302,7 +341,30 @@ class WebDavSync(
                         }
 
                         else -> {
-                            if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
+                            if (zipEntry.name.startsWith("appdata/")) {
+                                // Phase 20 — full-backup entries (datastore / shared_prefs /
+                                // remaining files). Presence in the zip implies the user made
+                                // a full export, so restore them regardless of config.items.
+                                // Zip-slip guarded via canonical-path containment. Live
+                                // DataStore instances may still flush after this write; the
+                                // restore dialog force-exits the process right after, which
+                                // bounds that window.
+                                val dataDir = context.filesDir.parentFile
+                                val relative = zipEntry.name.removePrefix("appdata/")
+                                val target = File(dataDir, relative)
+                                val rootCanonical = dataDir?.canonicalPath.orEmpty() + File.separator
+                                if (dataDir == null || relative.isBlank() ||
+                                    !target.canonicalPath.startsWith(rootCanonical)
+                                ) {
+                                    Log.w(TAG, "restoreFromBackupFile: Rejected unsafe appdata entry ${zipEntry.name}")
+                                } else {
+                                    target.parentFile?.mkdirs()
+                                    FileOutputStream(target).use { outputStream ->
+                                        zipIn.copyTo(outputStream)
+                                    }
+                                    Log.i(TAG, "restoreFromBackupFile: Restored ${zipEntry.name}")
+                                }
+                            } else if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
                                 zipEntry.name.startsWith("${FileFolders.UPLOAD}/")
                             ) {
                                 val fileName = zipEntry.name.substringAfter("${FileFolders.UPLOAD}/")
@@ -403,6 +465,27 @@ class WebDavSync(
             fis.copyTo(zipOut)
             zipOut.closeEntry()
             Log.d(TAG, "addFileToZip: Added $entryName (${file.length()} bytes) to zip")
+        }
+    }
+
+    /**
+     * Phase 20 — recursive zip with a per-file size cap, for the full-backup extras.
+     * Oversized files are skipped (logged) rather than failing the whole export.
+     */
+    private fun addDirectoryToZipFiltered(
+        zipOut: ZipOutputStream,
+        rootDir: File,
+        entryPrefix: String,
+    ) {
+        rootDir.walkTopDown().forEach { file ->
+            if (!file.isFile) return@forEach
+            if (file.length() > FULL_BACKUP_MAX_FILE_BYTES) {
+                Log.w(TAG, "addDirectoryToZipFiltered: skipping oversized ${file.absolutePath} (${file.length()} bytes)")
+                return@forEach
+            }
+            val relativePath = file.relativeTo(rootDir).invariantSeparatorsPath
+            runCatching { addFileToZip(zipOut, file, "$entryPrefix$relativePath") }
+                .onFailure { Log.w(TAG, "addDirectoryToZipFiltered: failed to add ${file.absolutePath}", it) }
         }
     }
 

@@ -1859,4 +1859,7 @@
   <string name="setting_display_page_omnitrix_selector_desc">Pick assistants on a rotating Omnitrix dial instead of a plain list</string>
   <string name="omnitrix_selector_title">Select transformation</string>
   <string name="omnitrix_selector_transform">Transform</string>
+
+  <!-- Phase 20: app data SAF provider -->
+  <string name="app_data_provider_title">Omnitrix App Data</string>
 </resources>

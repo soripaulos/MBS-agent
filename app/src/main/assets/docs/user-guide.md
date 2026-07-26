@@ -151,23 +151,55 @@ registration, PKCE, and token refresh.
 
 ---
 
-## 8. Prompt shaping: quick messages, mode injections, lorebooks
+## 8. Prompt shaping: every concept explained
 
-These three are often confused. The difference:
+These features all shape what the model sees. Here is what each one is, when to use it,
+and how they differ. (The assistant can create most of them for you from chat — see the
+`prompt-shaping-guide` skill and `manage_prompt_shaping` tool.)
 
-- **Quick messages** are *for you*: saved input snippets. Tapping one drops its text into
-  the input box so you can send/edit it. They do nothing on their own. Use for prompts you
-  type a lot. (Assistant → Quick messages.)
-- **Mode injections** are *always-on while active*: extra instructions force-added to the
-  prompt every turn. Think of them as toggleable "modes" ("answer only in Amharic",
-  "stay terse"). Enable/disable per assistant. They fire every turn regardless of content.
-- **Lorebooks (world books)** are *conditional*: entries injected only when their keyword
-  appears in the conversation. Use for large reference libraries where loading everything
-  would waste tokens — only the relevant entry loads. (E.g. an entry keyed on a character
-  or project name.)
+- **System prompt** (Assistant → Prompt): the assistant's core identity and standing
+  instructions. Stable; sent every turn at the very top.
+- **Conversation system prompt** (per-chat override): when the assistant has "allow
+  conversation system prompt" enabled, an individual chat can carry its OWN system prompt
+  that *replaces* the assistant's for that chat only. Use for one-off contexts ("this
+  chat is a mock interview") without touching the persona.
+- **Prompt injections** is the umbrella term for text force-inserted into the prompt at a
+  chosen *position* (before/after system prompt, top/bottom of chat, or at a depth N
+  messages back). Two kinds exist:
+  - **Mode injections** — unconditional: injected every turn while attached to the
+    assistant. Think of them as toggleable "modes": "answer only in Amharic", "reply in
+    JSON", "stay in character". Attach/detach per assistant. Because they cost tokens
+    every single turn, keep them short and detach when done.
+  - **Regex/keyword injections (lorebooks)** — conditional: an entry is injected ONLY
+    when one of its keywords appears in the recent conversation. A **lorebook** is a
+    named collection of such entries. Use for large reference sets (characters, project
+    glossaries, API notes) where only the relevant entry should ever load — near-zero
+    cost until a keyword triggers it.
+- **Message content template** (Assistant → advanced, `{{ message }}`): a wrapper applied
+  to every user message before sending. `{{ message }}` is replaced by what you typed.
+  Use to consistently frame input, e.g. `Translate to French: {{ message }}` for a
+  translator assistant. Leave as plain `{{ message }}` normally.
+- **Preset messages**: fake prior chat turns (user/assistant pairs) placed at the top of
+  every conversation. The model treats them as things that already happened — the
+  classic way to prime style or few-shot examples ("when I paste code, you respond with
+  a review in this exact format: …").
+- **Quick messages**: saved input snippets *for you*. Tapping one drops its text into the
+  input box to send or edit. They do nothing on their own and cost nothing — pure typing
+  shortcuts. Attach per assistant.
+- **Message regexes** (Assistant → Regex): find/replace rules applied to user and/or
+  assistant messages, optionally *visual-only* (changes what you see, not what the model
+  sees). Use to strip boilerplate, censor content on screen, or normalize model output.
+- **Custom requests = custom headers & custom bodies** (Assistant or Model settings):
+  extra HTTP headers or JSON body fields added to every API request for that
+  assistant/model. This is for provider-specific extras — e.g. a gateway API key header,
+  or a vendor-specific body flag like `{"enable_thinking": true}`. If your provider's
+  docs say "pass X-Foo: bar" or "set field foo in the request", this is where it goes.
+  If you don't have such a requirement, leave them empty — wrong values cause 400s.
 
-Rule of thumb: **quick message** = shortcut you trigger; **mode injection** = always-on
-rule; **lorebook** = auto-loaded reference triggered by keywords.
+Rule of thumb: **quick message** = shortcut you trigger · **mode injection** = always-on
+rule · **lorebook** = keyword-triggered reference · **preset messages** = style priming ·
+**template** = input wrapper · **regex** = post-processing · **custom headers/bodies** =
+API plumbing.
 
 ---
 
@@ -238,7 +270,50 @@ The app's identity is the **Omnitrix**. Four dial styles are available: **Origin
 
 ---
 
-## 12. Common "how do I…"
+## 12. Files, backup, and restore
+
+- **Browse the app's data from any file manager**: the app publishes its data folder
+  (skills, uploads, exports) through the system file picker. In Files by Google /
+  Material Files / similar, open the side drawer and pick the app's data root. You can
+  read, edit, copy in/out, and delete — copying the tree out IS a valid manual backup.
+  Workspace files are published as a second root.
+- **Full backup**: Settings → Backup → Import/Export → Export. This zip contains
+  EVERYTHING: settings (providers, assistants, MCP servers, all config), the entire
+  database (conversations, memories, workflows, cron jobs, SSH hosts), skills, uploaded
+  files, fonts, and every preference store. Restore picks a zip and restarts the app.
+  Caveats: workspace Linux rootfs and local model weights are excluded (huge and
+  re-downloadable), and encrypted credential stores (OAuth tokens) only survive restore
+  on the SAME device — hardware-keystore keys cannot leave the device, so re-sign-in
+  after moving to a new phone.
+- **Cloud backup**: WebDAV and S3 tabs sync the same archive on a schedule.
+
+## 13. Reliability: long tasks, token limits, auto-resume
+
+- **Why long agent tasks used to die**: every step of a multi-step turn re-sends all
+  previous steps' tool outputs, so context grew until the model's window overflowed. The
+  app now compacts older tool outputs mid-turn automatically (recent steps stay
+  verbatim; older ones become excerpts, with full shell outputs still on disk under
+  /tool_outputs). Combined with per-assistant auto-compaction (§2) this keeps very long
+  tasks inside the window.
+- **Auto-resume**: if a turn dies on a transient error (network reset, timeout, provider
+  5xx), the app retries it up to twice with backoff before showing an error. User stops
+  are never auto-resumed. Per-assistant toggleable.
+- **Scheduled tasks**: a cron run that fails gets one automatic re-run after a short
+  backoff before recording failure.
+- **Multiple sessions**: each conversation has its own independent generation job — you
+  can start a task in one chat, switch assistants/chats, and start another; both run in
+  parallel (plus sub-agents within a single chat via the Sub-agents tool).
+
+## 14. Delegating to CLI coding agents (Claude Code, Kimi CLI)
+
+For heavy coding work, delegate to a CLI agent installed in Termux. Enable the Termux
+tool category and the bundled `cli-agent-bridge` skill — it teaches the assistant the
+exact headless invocations (`claude -p …`, session resume, output capture) and the rules
+(show the command first, summarize output, relay questions back to you). Kimi CLI
+authenticates itself inside Termux, so its models are usable through delegation without
+any Kimi API key in the app.
+
+## 15. Common "how do I…"
 
 - **Change a setting without leaving chat:** just ask ("turn on plan mode", "enable ssh
   tools", "raise auto-compact to 100k"). With the `agent_config` tool enabled, the

@@ -88,6 +88,11 @@ data class Assistant(
     // while asking for guidance when genuinely uncertain rather than assuming. Best paired
     // with enableMemory + session_search + skill_import + agent_config tools enabled.
     val smartModeEnabled: Boolean = false,
+    // Phase 20 — auto-resume: when a turn dies mid-task on a TRANSIENT error (network
+    // reset, timeout, 5xx), ChatService silently retries the turn up to twice with
+    // backoff instead of stranding the task with an error card. User stops
+    // (cancellation) never auto-resume. On by default — "abrupt stops should continue".
+    val autoResumeInterrupted: Boolean = true,
 )
 
 @Serializable

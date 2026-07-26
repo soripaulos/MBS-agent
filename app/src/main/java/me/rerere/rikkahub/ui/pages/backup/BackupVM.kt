@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.WebDavConfig
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.sync.importer.ChatboxImporter
 import me.rerere.rikkahub.data.sync.importer.CherryStudioProviderImporter
@@ -82,13 +83,27 @@ class BackupVM(
     }
 
     suspend fun exportToFile(): File {
-        val file = webDavSync.prepareBackupFile(settings.value.webDavConfig.copy())
+        // Phase 20 — the local export is a FULL backup: force both item groups on
+        // (regardless of the user's cloud-sync selection) and include the everything
+        // extras (datastore prefs, shared_prefs, remaining files). One zip = whole app.
+        val file = webDavSync.prepareBackupFile(
+            config = settings.value.webDavConfig.copy(
+                items = listOf(WebDavConfig.BackupItem.DATABASE, WebDavConfig.BackupItem.FILES)
+            ),
+            includeEverything = true,
+        )
         recordBackupTime()
         return file
     }
 
     suspend fun restoreFromLocalFile(file: File) {
-        webDavSync.restoreFromLocalFile(file, settings.value.webDavConfig)
+        // Mirror of exportToFile: restore every item group present in the zip.
+        webDavSync.restoreFromLocalFile(
+            file,
+            settings.value.webDavConfig.copy(
+                items = listOf(WebDavConfig.BackupItem.DATABASE, WebDavConfig.BackupItem.FILES)
+            ),
+        )
     }
 
     suspend fun restoreFromChatBox(file: File): ChatboxRestoreResult {

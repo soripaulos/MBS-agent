@@ -391,20 +391,14 @@ private fun ChainOfThoughtScope.AskUserToolStep(
     val isAnswered = tool.approvalState is ToolApprovalState.Answered
     val arguments = tool.inputAsJson()
 
-    // Parse questions from arguments
-    val questions = remember(arguments) {
-        runCatching {
-            arguments.jsonObject["questions"]?.jsonArray?.map { q ->
-                val obj = q.jsonObject
-                AskUserQuestion(
-                    id = obj["id"]?.jsonPrimitive?.contentOrNull ?: "",
-                    question = obj["question"]?.jsonPrimitive?.contentOrNull ?: "",
-                    options = obj["options"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
-                    selectionType = obj["selection_type"]?.jsonPrimitive?.contentOrNull ?: "text"
-                )
-            } ?: emptyList()
-        }.getOrElse { emptyList() }
-    }
+    // Parse questions from arguments. Shape-tolerant on purpose: models routinely deviate
+    // from the declared schema — option OBJECTS ({"label": ...}) instead of strings, a bare
+    // top-level {"question": ...} instead of a `questions` array, alternate key names
+    // (prompt/text/choices), or selection_type variants ("single_choice", "checkbox").
+    // The old strict parser threw on the first deviation and runCatching collapsed the
+    // whole card to an empty column with a lone Submit button. Parse defensively,
+    // per-element, and never let one malformed entry sink the rest.
+    val questions = remember(arguments) { parseAskUserQuestions(arguments) }
 
     // Track answers for text/single questions
     val answers = remember { mutableStateMapOf<String, String>() }
@@ -606,6 +600,66 @@ private data class AskUserQuestion(
     val options: List<String>,
     val selectionType: String = "text", // "text" | "single" | "multi"
 )
+
+/** First non-blank string value among [keys] on this object. */
+private fun JsonObject.firstString(vararg keys: String): String? =
+    keys.firstNotNullOfOrNull { key ->
+        (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    }
+
+/** An option may be a plain string or an object carrying its text under various keys. */
+private fun parseAskUserOption(element: JsonElement): String? = when (element) {
+    is JsonPrimitive -> element.contentOrNull?.takeIf { it.isNotBlank() }
+    is JsonObject -> element.firstString("label", "value", "text", "title", "option", "name")
+    else -> null
+}
+
+private fun parseAskUserQuestion(element: JsonElement, index: Int): AskUserQuestion? {
+    return when (element) {
+        // A bare string is a free-text question.
+        is JsonPrimitive -> element.contentOrNull?.takeIf { it.isNotBlank() }?.let {
+            AskUserQuestion(id = "q$index", question = it, options = emptyList(), selectionType = "text")
+        }
+
+        is JsonObject -> {
+            val options = (element["options"] ?: element["choices"] ?: element["answers"])
+                ?.let { it as? kotlinx.serialization.json.JsonArray }
+                ?.mapNotNull(::parseAskUserOption)
+                .orEmpty()
+            val questionText = element.firstString("question", "prompt", "text", "title", "q")
+                // Options with no visible question still deserve a header the user can act on.
+                ?: if (options.isNotEmpty()) "Choose an option:" else return null
+            val rawType = element.firstString("selection_type", "selectionType", "type", "mode")
+                ?.lowercase().orEmpty()
+            val selectionType = when {
+                rawType.contains("multi") || rawType.contains("checkbox") -> "multi"
+                rawType.contains("single") || rawType.contains("choice") ||
+                    rawType.contains("select") || rawType.contains("radio") -> "single"
+                else -> "text"
+            }
+            AskUserQuestion(
+                id = element.firstString("id", "key") ?: "q$index",
+                question = questionText,
+                options = options,
+                // A "single"/"multi" question with zero parseable options is unanswerable
+                // as chips — degrade to free text so the user can always respond.
+                selectionType = if (options.isEmpty()) "text" else selectionType,
+            )
+        }
+
+        else -> null
+    }
+}
+
+private fun parseAskUserQuestions(arguments: JsonElement): List<AskUserQuestion> = runCatching {
+    val root = arguments as? JsonObject ?: return@runCatching emptyList()
+    val fromArray = (root["questions"] as? kotlinx.serialization.json.JsonArray)
+        ?.mapIndexedNotNull { index, el -> parseAskUserQuestion(el, index) }
+        .orEmpty()
+    if (fromArray.isNotEmpty()) return@runCatching fromArray
+    // Fallback: the model sent a single top-level question instead of a `questions` array.
+    listOfNotNull(parseAskUserQuestion(root, 0))
+}.getOrElse { emptyList() }
 
 @Composable
 private fun ToolDenyReasonDialog(

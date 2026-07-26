@@ -189,11 +189,26 @@ class CronJobWorker(
                 },
             )
 
-            val (outcome, errorMessage, convIdMaybe) = when (job.mode) {
-                "llm"    -> runLlm(job)
-                "direct" -> runDirect(job)
-                else     -> Triple("failed", "unknown_mode:${job.mode}", null)
+            // Phase 20 — failsafe retry: a scheduled task that dies mid-run on a
+            // transient error (network blip, provider hiccup) gets ONE automatic re-run
+            // after a short backoff instead of silently giving up until the next
+            // scheduled fire. Timed-out runs are NOT retried (they already consumed the
+            // 15-min budget), and direct-mode parse errors are deterministic — retry
+            // only helps the "failed for no visible reason" class the user reported.
+            var attempt = 0
+            var result: Triple<String, String?, Uuid?>
+            while (true) {
+                result = when (job.mode) {
+                    "llm"    -> runLlm(job)
+                    "direct" -> runDirect(job)
+                    else     -> Triple("failed", "unknown_mode:${job.mode}", null)
+                }
+                if (result.first != "failed" || attempt >= 1 || job.mode !in setOf("llm", "direct")) break
+                attempt++
+                android.util.Log.w(TAG, "cron job ${job.id} failed (${result.second}); retrying once after backoff")
+                kotlinx.coroutines.delay(10_000L)
             }
+            val (outcome, errorMessage, convIdMaybe) = result
 
             runRepo.update(ScheduledJobRunEntity(
                 id = runRowId,

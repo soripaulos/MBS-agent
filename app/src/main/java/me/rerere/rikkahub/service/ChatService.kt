@@ -746,7 +746,10 @@ class ChatService(
 
     private suspend fun handleMessageComplete(
         conversationId: Uuid,
-        messageRange: ClosedRange<Int>? = null
+        messageRange: ClosedRange<Int>? = null,
+        // Phase 20 — auto-resume depth. Transient failures re-enter this function with
+        // attempt+1; capped so a genuinely broken provider can't loop forever.
+        resumeAttempt: Int = 0,
     ) {
         val settings = settingsStore.settingsFlow.first()
         // Resolve the assistant from this conversation's own assistantId — the global
@@ -1034,6 +1037,20 @@ class ChatService(
                 Log.w(TAG, "handleMessageComplete: failure-path save failed", saveErr)
             }
 
+            // Phase 20 — auto-resume: a mid-task transient failure (connection reset,
+            // timeout, provider 5xx) silently retries the turn with backoff instead of
+            // stranding the task behind an error card. User cancellation never resumes,
+            // and the cap keeps a genuinely broken provider from looping.
+            if (assistant.autoResumeInterrupted &&
+                resumeAttempt < 2 &&
+                isTransientGenerationError(it)
+            ) {
+                Log.w(TAG, "handleMessageComplete: transient failure, auto-resuming (attempt ${resumeAttempt + 1}): $it")
+                kotlinx.coroutines.delay(3_000L * (resumeAttempt + 1))
+                handleMessageComplete(conversationId, messageRange, resumeAttempt + 1)
+                return
+            }
+
             it.printStackTrace()
             addError(it, conversationId, title = context.getString(R.string.error_title_generation))
             Logging.log(TAG, "handleMessageComplete: $it")
@@ -1298,6 +1315,20 @@ class ChatService(
             }
         }
         return chars / 4
+    }
+
+    /**
+     * Phase 20 — is this failure worth an automatic retry? Network-shaped errors are;
+     * user cancellation and logic errors (bad request, auth) are not.
+     */
+    private fun isTransientGenerationError(t: Throwable): Boolean {
+        if (t is kotlinx.coroutines.CancellationException) return false
+        if (t is java.io.IOException) return true
+        val msg = t.message?.lowercase().orEmpty()
+        return listOf(
+            "timeout", "timed out", "stream was reset", "connection", "socket",
+            "unexpected end of stream", "econnreset", "500", "502", "503", "529",
+        ).any { msg.contains(it) }
     }
 
     /**
