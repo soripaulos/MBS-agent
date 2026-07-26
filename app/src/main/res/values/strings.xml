@@ -7,7 +7,7 @@
   <string name="about_page_version">Version</string>
   <string name="about_page_website">Website</string>
   <string name="add">Add</string>
-  <string name="app_name">RikkaHub Agent</string>
+  <string name="app_name">Omnitrix</string>
   <string name="asr_button_content_description">Speech Recognition</string>
   <string name="asr_button_stop">Stop</string>
   <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
@@ -1847,4 +1847,16 @@
   <string name="assistant_page_local_tools_app_docs_desc">Let the assistant read the built-in user guide so it can accurately answer how-to questions about the app\'s own features</string>
   <string name="setting_page_docs">User guide</string>
   <string name="setting_page_docs_desc">How to use assistants, skills, memory, tools, and everything else</string>
+
+  <!-- Phase 19: Omnitrix identity -->
+  <string name="setting_display_page_app_icon_omniverse">Omniverse</string>
+  <string name="setting_display_page_app_icon_original">Original series</string>
+  <string name="setting_display_page_app_icon_alien_force">Alien Force</string>
+  <string name="setting_display_page_app_icon_ultimatrix">Ultimatrix</string>
+  <string name="setting_display_page_omnitrix">Omnitrix</string>
+  <string name="setting_display_page_omnitrix_variant">Omnitrix variant</string>
+  <string name="setting_display_page_omnitrix_selector_title">Omnitrix assistant selector</string>
+  <string name="setting_display_page_omnitrix_selector_desc">Pick assistants on a rotating Omnitrix dial instead of a plain list</string>
+  <string name="omnitrix_selector_title">Select transformation</string>
+  <string name="omnitrix_selector_transform">Transform</string>
 </resources>

@@ -756,7 +756,27 @@ data class DisplaySetting(
     val chatCustomFontName: String = "",
     val enableVolumeKeyScroll: Boolean = false,
     val volumeKeyScrollRatio: Float = 1.0f,
+    // Phase 19 — Omnitrix identity. Which dial style themes the splash/selector art, and
+    // whether the assistant picker uses the dial-style Omnitrix selector instead of the
+    // plain list sheet. The variant drawables are placeholder art the user can replace
+    // with authentic assets — see docs/omnitrix-assets.md for exact file names.
+    val omnitrixVariant: OmnitrixVariant = OmnitrixVariant.OMNIVERSE,
+    val useOmnitrixSelector: Boolean = true,
 )
+
+/**
+ * Phase 19 — the four Omnitrix dial styles. Each maps to a drawable
+ * (`R.drawable.omnitrix_<name>`) used by the assistant selector dial and referenced by the
+ * matching launcher-icon variant. Replace the placeholder drawables with authentic assets
+ * keeping the same file names.
+ */
+@Serializable
+enum class OmnitrixVariant {
+    ORIGINAL,      // original series dial
+    ALIEN_FORCE,   // Alien Force dial
+    ULTIMATRIX,    // Ultimatrix dial
+    OMNIVERSE,     // Omniverse dial (default)
+}
 
 @Serializable
 data class WebDavConfig(

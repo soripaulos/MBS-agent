@@ -123,7 +123,7 @@
     android:dataExtractionRules="@xml/data_extraction_rules"
     android:enableOnBackInvokedCallback="true"
     android:fullBackupContent="@xml/backup_rules"
-    android:icon="@mipmap/ic_launcher"
+    android:icon="@mipmap/ic_launcher_omni_omniverse"
     android:label="@string/app_name"
     android:supportsRtl="true"
     android:theme="@style/Theme.Rikkahub"
@@ -182,7 +182,7 @@
       android:name=".LauncherDefault"
       android:enabled="true"
       android:exported="true"
-      android:icon="@mipmap/ic_launcher"
+      android:icon="@mipmap/ic_launcher_omni_omniverse"
       android:label="@string/app_name"
       android:targetActivity=".RouteActivity">
       <intent-filter>
@@ -199,7 +199,7 @@
       android:name=".LauncherOcean"
       android:enabled="false"
       android:exported="true"
-      android:icon="@mipmap/ic_launcher_ocean"
+      android:icon="@mipmap/ic_launcher_omni_original"
       android:label="@string/app_name"
       android:targetActivity=".RouteActivity">
       <intent-filter>
@@ -216,7 +216,7 @@
       android:name=".LauncherMidnight"
       android:enabled="false"
       android:exported="true"
-      android:icon="@mipmap/ic_launcher_midnight"
+      android:icon="@mipmap/ic_launcher_omni_alien_force"
       android:label="@string/app_name"
       android:targetActivity=".RouteActivity">
       <intent-filter>
@@ -233,7 +233,7 @@
       android:name=".LauncherSunset"
       android:enabled="false"
       android:exported="true"
-      android:icon="@mipmap/ic_launcher_sunset"
+      android:icon="@mipmap/ic_launcher_omni_ultimatrix"
       android:label="@string/app_name"
       android:targetActivity=".RouteActivity">
       <intent-filter>

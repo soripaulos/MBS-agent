@@ -94,17 +94,33 @@ fun AssistantPicker(
     )
 
     if (showPicker) {
-        AssistantPickerSheet(
-            settings = settings,
-            currentAssistant = state.currentAssistant,
-            onAssistantSelected = { assistant ->
-                showPicker = false
-                state.setSelectAssistant(assistant)
-            },
-            onDismiss = {
-                showPicker = false
-            }
-        )
+        // Phase 19 — the Omnitrix dial selector is the default picker; the plain list
+        // sheet stays available via Settings -> Preferences -> UI.
+        if (settings.displaySetting.useOmnitrixSelector) {
+            OmnitrixSelectorSheet(
+                settings = settings,
+                currentAssistant = state.currentAssistant,
+                onAssistantSelected = { assistant ->
+                    showPicker = false
+                    state.setSelectAssistant(assistant)
+                },
+                onDismiss = {
+                    showPicker = false
+                }
+            )
+        } else {
+            AssistantPickerSheet(
+                settings = settings,
+                currentAssistant = state.currentAssistant,
+                onAssistantSelected = { assistant ->
+                    showPicker = false
+                    state.setSelectAssistant(assistant)
+                },
+                onDismiss = {
+                    showPicker = false
+                }
+            )
+        }
     }
 }
 

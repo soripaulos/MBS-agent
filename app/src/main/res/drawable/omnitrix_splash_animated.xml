@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- System splash icon (Android 12+): the satellite dials orbit the central Omnitrix. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/omnitrix_splash">
+    <target
+        android:name="constellation"
+        android:animation="@animator/omnitrix_spin" />
+</animated-vector>

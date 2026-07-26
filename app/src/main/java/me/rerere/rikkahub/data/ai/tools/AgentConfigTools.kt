@@ -62,6 +62,26 @@ fun createAgentConfigTools(
             smart mode, recent-chats reference, fast-path router, temperature). Call this
             before changing config so you know the current state and valid tool names.
         """.trimIndent().replace("\n", " "),
+        // Phase 19 — orientation map. Rides in the system prompt whenever the self-config
+        // tool group is enabled so the model knows exactly which verb creates/changes what,
+        // instead of guessing (the root cause of "wonky" skill/workflow/assistant flows).
+        systemPrompt = { _, _ ->
+            """
+            Self-management map — you can create and configure most things yourself; pick the
+            right verb and do it directly instead of sending the user to Settings:
+            skills: skill_manage (create/patch/delete your own), skill_install_from_url or
+            skill_install_from_text (import external), use_skill (run). assistants:
+            create_assistant. settings/tools: get_agent_config then set_agent_config.
+            memories: memory_tool (kind=profile/preference/note). workflows (trigger-based
+            automations): workflow_create and related workflow_* tools. scheduled tasks:
+            schedule_job. MCP servers: mcp_list/mcp_add/mcp_update/mcp_test/mcp_set_enabled.
+            past chats: session_search/session_get. app how-to answers: read_app_docs
+            (section "self-management" has full recipes). If a verb you need is missing,
+            its tool category is disabled — enable it with set_agent_config (ask first) or
+            tell the user which toggle to flip. Approval cards are the user's checkpoint;
+            request the action and let them decide, don't refuse preemptively.
+            """.trimIndent().replace("\n", " ")
+        },
         parameters = { InputSchema.Obj(properties = buildJsonObject {}, required = emptyList()) },
         execute = {
             val settings = settingsStore.settingsFlow.first()

@@ -266,20 +266,18 @@ object ToolApprovalDefaults {
      * read this set when rendering the keyboard.
      */
     val NO_ALWAYS_ALLOW: Set<String> = setOf(
-        "mcp_add",
-        "mcp_update",
+        // Phase 19 — mcp_add / mcp_update and skill_install_from_url / _from_text were
+        // previously in this set (per-call approval forever). They are now Always-Allow
+        // ELIGIBLE by explicit user decision: the user wants the agent to self-provision
+        // skills and MCP servers frictionlessly and prefers to control the trade-off via
+        // the standing "Always Allow" grant themselves. Both still default to per-call
+        // approval (ALWAYS_ASK above) until the user grants otherwise.
+        //
         // eval_javascript runs arbitrary code in the QuickJS engine. Even with a wall-clock
         // timeout + a bounded native heap/stack, the code itself is attacker-controllable, so
         // a blanket "Always Allow" would hand unattended cron / Telegram paths a standing
         // arbitrary-code primitive. Require a per-call confirmation every time.
         "eval_javascript",
-        // Phase 16 — skill_install_from_url + skill_install_from_text. The skill body is
-        // fetched from an arbitrary URL (or supplied as raw text via any other tool, e.g.
-        // ssh_exec / termux_run_command for authenticated servers) and installed against
-        // the assistant's tool surface. We require per-call approval every single time so
-        // the user reviews the URL / source-label + skill name.
-        "skill_install_from_url",
-        "skill_install_from_text",
         // Phase 21 / Pass 2 — browser_eval_js runs arbitrary JavaScript in a real WebView
         // with the user's cookies, localStorage, and authenticated fetch surface. Even
         // after HARDLINE filters out shell-shaped strings + obvious dynamic-eval patterns,

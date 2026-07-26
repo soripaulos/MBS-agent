@@ -47,6 +47,7 @@ import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.ChatFontFamily
 import me.rerere.rikkahub.data.datastore.DisplaySetting
+import me.rerere.rikkahub.data.datastore.OmnitrixVariant
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.files.FileUtils
 import me.rerere.rikkahub.ui.components.nav.BackButton
@@ -410,6 +411,41 @@ fun SettingPreferencesUIPage(vm: SettingVM = koinViewModel()) {
                 }
             }
             item {
+                // Phase 19 — Omnitrix identity: which dial art themes the assistant
+                // selector, and whether the dial selector replaces the plain list.
+                CardGroup(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    title = { Text(stringResource(R.string.setting_display_page_omnitrix)) },
+                ) {
+                    item(
+                        headlineContent = { Text(stringResource(R.string.setting_display_page_omnitrix_variant)) },
+                        supportingContent = {
+                            Select(
+                                options = OmnitrixVariant.entries.toList(),
+                                selectedOption = displaySetting.omnitrixVariant,
+                                onOptionSelected = { variant ->
+                                    updateDisplaySetting(displaySetting.copy(omnitrixVariant = variant))
+                                },
+                                optionToString = { it.labelUI() },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        },
+                    )
+                    item(
+                        headlineContent = { Text(stringResource(R.string.setting_display_page_omnitrix_selector_title)) },
+                        supportingContent = { Text(stringResource(R.string.setting_display_page_omnitrix_selector_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = displaySetting.useOmnitrixSelector,
+                                onCheckedChange = {
+                                    updateDisplaySetting(displaySetting.copy(useOmnitrixSelector = it))
+                                }
+                            )
+                        },
+                    )
+                }
+            }
+            item {
                 // Phase 17 — switchable app icon (+ splash icon on Android 12+). Backed
                 // by activity-aliases; see AppIconManager for the switching mechanics.
                 var currentIcon by remember { mutableStateOf(AppIconManager.currentVariant(context)) }
@@ -420,7 +456,7 @@ fun SettingPreferencesUIPage(vm: SettingVM = koinViewModel()) {
                     AppIconVariant.entries.forEach { variant ->
                         item(
                             headlineContent = { Text(variant.labelUI()) },
-                            supportingContent = if (variant == AppIconVariant.DEFAULT) {
+                            supportingContent = if (variant == AppIconVariant.OMNIVERSE) {
                                 { Text(stringResource(R.string.setting_display_page_app_icon_default_desc)) }
                             } else null,
                             trailingContent = {
@@ -442,10 +478,18 @@ fun SettingPreferencesUIPage(vm: SettingVM = koinViewModel()) {
 
 @Composable
 private fun AppIconVariant.labelUI(): String = when (this) {
-    AppIconVariant.DEFAULT -> stringResource(R.string.setting_display_page_app_icon_default)
-    AppIconVariant.OCEAN -> stringResource(R.string.setting_display_page_app_icon_ocean)
-    AppIconVariant.MIDNIGHT -> stringResource(R.string.setting_display_page_app_icon_midnight)
-    AppIconVariant.SUNSET -> stringResource(R.string.setting_display_page_app_icon_sunset)
+    AppIconVariant.OMNIVERSE -> stringResource(R.string.setting_display_page_app_icon_omniverse)
+    AppIconVariant.ORIGINAL -> stringResource(R.string.setting_display_page_app_icon_original)
+    AppIconVariant.ALIEN_FORCE -> stringResource(R.string.setting_display_page_app_icon_alien_force)
+    AppIconVariant.ULTIMATRIX -> stringResource(R.string.setting_display_page_app_icon_ultimatrix)
+}
+
+@Composable
+private fun OmnitrixVariant.labelUI(): String = when (this) {
+    OmnitrixVariant.OMNIVERSE -> stringResource(R.string.setting_display_page_app_icon_omniverse)
+    OmnitrixVariant.ORIGINAL -> stringResource(R.string.setting_display_page_app_icon_original)
+    OmnitrixVariant.ALIEN_FORCE -> stringResource(R.string.setting_display_page_app_icon_alien_force)
+    OmnitrixVariant.ULTIMATRIX -> stringResource(R.string.setting_display_page_app_icon_ultimatrix)
 }
 
 private val CustomFontMimeTypesUI = arrayOf(

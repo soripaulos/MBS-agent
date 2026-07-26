@@ -17,10 +17,13 @@ import android.content.pm.PackageManager
  * ALIAS_PACKAGE below.
  */
 enum class AppIconVariant(val aliasClassName: String) {
-    DEFAULT("me.rerere.rikkahub.LauncherDefault"),
-    OCEAN("me.rerere.rikkahub.LauncherOcean"),
-    MIDNIGHT("me.rerere.rikkahub.LauncherMidnight"),
-    SUNSET("me.rerere.rikkahub.LauncherSunset"),
+    // Phase 19 — the variants are the four Omnitrix editions. The alias class names are
+    // frozen (renaming a component alias loses users' enabled-state and pinned shortcuts),
+    // so Omniverse rides the historical "Default" alias, Original rides "Ocean", etc.
+    OMNIVERSE("me.rerere.rikkahub.LauncherDefault"),
+    ORIGINAL("me.rerere.rikkahub.LauncherOcean"),
+    ALIEN_FORCE("me.rerere.rikkahub.LauncherMidnight"),
+    ULTIMATRIX("me.rerere.rikkahub.LauncherSunset"),
 }
 
 object AppIconManager {
@@ -31,15 +34,15 @@ object AppIconManager {
             val state = pm.getComponentEnabledSetting(componentOf(context, variant))
             when (state) {
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> return variant
-                // DEFAULT means "as declared in the manifest": only LauncherDefault is
-                // manifest-enabled, so DEFAULT counts as active for it alone.
+                // DEFAULT means "as declared in the manifest": only the Omniverse alias
+                // (LauncherDefault) is manifest-enabled, so it alone counts as active.
                 PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ->
-                    if (variant == AppIconVariant.DEFAULT) return variant
+                    if (variant == AppIconVariant.OMNIVERSE) return variant
 
                 else -> Unit
             }
         }
-        return AppIconVariant.DEFAULT
+        return AppIconVariant.OMNIVERSE
     }
 
     fun setVariant(context: Context, variant: AppIconVariant) {

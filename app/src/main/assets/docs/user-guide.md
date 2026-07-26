@@ -190,7 +190,55 @@ Built-in ways the app keeps costs down, and how to help:
 
 ---
 
-## 10. Common "how do I…"
+## 10. Self-management cookbook (for the agent and the curious)
+
+The assistant can build and configure almost everything itself. The exact verb map:
+
+| You want | The agent calls | Notes |
+|---|---|---|
+| New skill from this session's work | `skill_manage` action=create | Auto-enabled after creation |
+| Fix a wrong skill | `skill_manage` action=patch | Exact find/replace in SKILL.md |
+| Import a skill from a URL or pasted text | `skill_install_from_url` / `skill_install_from_text` | Approval card shows source + name; "Always allow" eligible |
+| New assistant/persona | `create_assistant` | Name + prompt + tool categories |
+| Toggle its own tools/skills/settings | `get_agent_config` → `set_agent_config` | Diff shown on the approval card |
+| Remember something | `memory_tool` | kind = profile / preference / note |
+| Recurring automation with a trigger | `workflow_create` (+ other `workflow_*`) | Trigger → condition → action |
+| Scheduled/recurring task | `schedule_job` | Cron-style, natural language OK |
+| Add/test an MCP server | `mcp_add`, `mcp_test`, `mcp_set_enabled` | OAuth servers: add URL + enable OAuth |
+| Search past conversations | `session_search` / `session_get` | FTS over every chat |
+| Answer "how does this app work" | `read_app_docs` | Reads this guide |
+
+If the assistant says it can't do one of these, the usual cause is the tool *category*
+being disabled for that assistant (Assistant → Local tools): Skill import, Workflows,
+Cron jobs, MCP control, Self-configuration, Session search, In-app help. Enable them —
+or just ask the assistant to enable them itself (needs Self-configuration on).
+
+Approval philosophy: the agent should *attempt* the action and let the approval card be
+your checkpoint. You can grant "Always allow" per tool in Settings → Tool approvals to
+remove friction for verbs you trust (skill import and MCP add are eligible).
+
+---
+
+## 11. Omnitrix identity
+
+The app's identity is the **Omnitrix**. Four dial styles are available: **Original**,
+**Alien Force**, **Ultimatrix**, and **Omniverse** (default).
+
+- **Variant** — Settings → Preferences → UI → Omnitrix → Variant. Themes the assistant
+  selector dial art.
+- **Omnitrix selector** — the assistant picker is a dial: assistants orbit the dial,
+  tap one to rotate it into position, then hit **Transform** to switch. Toggle back to
+  the plain list in the same settings section.
+- **App icon** — Settings → Preferences → UI → App icon: each choice is one of the four
+  Omnitrix editions (splash icon follows on Android 12+).
+- **Splash** — animated Omnitrix constellation on Android 12+.
+- **Custom art** — the bundled dials are placeholders. Drop in your own artwork by
+  replacing the drawable files (same names) — see `docs/omnitrix-assets.md` in the
+  repository for the exact list and specs.
+
+---
+
+## 12. Common "how do I…"
 
 - **Change a setting without leaving chat:** just ask ("turn on plan mode", "enable ssh
   tools", "raise auto-compact to 100k"). With the `agent_config` tool enabled, the

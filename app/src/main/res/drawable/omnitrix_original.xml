@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder Omnitrix dial (original series style). Replace this file with an
+     authentic asset, keeping the same file name. Keep content inside the middle 66%
+     of the viewport (adaptive-icon safe zone). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M54,54m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0"
+        android:fillColor="#E8E8E8"/>
+    <path
+        android:pathData="M54,54m-26,0a26,26 0,1 1,52 0a26,26 0,1 1,-52 0"
+        android:fillColor="#111111"/>
+    <path
+        android:pathData="M36,36 L72,36 L58,54 L72,72 L36,72 L50,54 Z"
+        android:fillColor="#37D24A"/>
+</vector>
