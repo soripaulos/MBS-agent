@@ -12,5 +12,5 @@
   <color name="ic_launcher_bg_midnight">#FF0D1626</color>
   <color name="ic_launcher_bg_sunset">#FFE8663E</color>
   <!-- Phase 19 - Omnitrix launcher icon backdrop -->
-  <color name="omnitrix_icon_bg">#FF0B0F0C</color>
+  <color name="omnitrix_icon_bg">#FF000000</color>
 </resources>

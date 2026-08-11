@@ -1,4 +1,4 @@
-# MBS-Agent — User Guide
+# Omnitrix — User Guide
 
 This guide explains every major feature, what it's for, and how the pieces fit together.
 It is also readable by the assistant itself: ask in chat "how do I use X" or "what's the
@@ -313,7 +313,27 @@ exact headless invocations (`claude -p …`, session resume, output capture) and
 authenticates itself inside Termux, so its models are usable through delegation without
 any Kimi API key in the app.
 
-## 15. Common "how do I…"
+## 15. Delegating to Kimi Code CLI
+
+The `kimi-delegate` skill hands heavy repo/coding work to Kimi Code CLI in Termux with a
+proper written brief (goal, working directory, constraints, only the relevant context,
+definition of done), then verifies the result and reports back. Enable the Termux tool
+category and the skill. Kimi bills your own Kimi account, so delegating heavy loops is
+usually cheaper than iterating in-app. The assistant relays any question Kimi asks back to
+you rather than answering on your behalf.
+
+## 16. Token spend: finding the leak
+
+Settings/chat drawer → Statistics now shows **token spend by model** and **top
+conversations by token spend**, each with the prompt/completion split. Use it to find the
+one runaway chat or model that's burning your budget. Defaults that keep spend down:
+auto-compaction is ON (compresses history past ~48k tokens), older tool outputs are
+excerpted mid-turn, and the stable part of the system prompt is kept byte-identical so
+providers can cache it. If a single task still balloons: delegate the noisy part to a
+sub-agent (clean context) or to Kimi, and keep the assistant's enabled-tool list lean —
+every enabled tool category adds its schema to every request.
+
+## 17. Common "how do I…"
 
 - **Change a setting without leaving chat:** just ask ("turn on plan mode", "enable ssh
   tools", "raise auto-compact to 100k"). With the `agent_config` tool enabled, the

@@ -25,7 +25,10 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // -PsingleAbi=arm64-v8a narrows the build to one ABI (CI debug builds use this
+            // so only app-arm64-v8a-debug.apk is produced, which also halves build time).
+            val singleAbi = (project.findProperty("singleAbi") as String?)?.takeIf { it.isNotBlank() }
+            abiFilters += singleAbi?.let { listOf(it) } ?: listOf("arm64-v8a", "x86_64")
         }
     }
 
@@ -36,8 +39,15 @@ android {
             val isBuildingBundle = gradle.startParameter.taskNames.any { it.lowercase().contains("bundle") }
             isEnable = !isBuildingBundle
             reset()
-            include("arm64-v8a", "x86_64")
-            isUniversalApk = true
+            val singleAbi = (project.findProperty("singleAbi") as String?)?.takeIf { it.isNotBlank() }
+            if (singleAbi != null) {
+                include(singleAbi)
+                // No universal APK in single-ABI mode: the split IS the deliverable.
+                isUniversalApk = false
+            } else {
+                include("arm64-v8a", "x86_64")
+                isUniversalApk = true
+            }
         }
     }
 

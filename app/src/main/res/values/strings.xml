@@ -1862,4 +1862,13 @@
 
   <!-- Phase 20: app data SAF provider -->
   <string name="app_data_provider_title">Omnitrix App Data</string>
+
+  <!-- Phase 21: token stats breakdown, ask_user fallback, dial-as-button -->
+  <string name="stats_page_tokens_by_model">Token spend by model</string>
+  <string name="stats_page_tokens_by_conversation">Top conversations by token spend</string>
+  <string name="stats_page_token_row_detail">in %1$s · out %2$s · %3$d messages</string>
+  <string name="chat_message_tool_ask_unparsed">The question couldn\'t be read. Answer freely below, or reload.</string>
+  <string name="chat_message_tool_ask_reload">Reload</string>
+  <string name="chat_message_tool_ask_fallback_prompt">Your answer</string>
+  <string name="omnitrix_selector_hint">Tap the Omnitrix to transform</string>
 </resources>

@@ -483,9 +483,8 @@ private fun ChatPageContent(
                     inputState.editingMessage = null
                     inputState.setMessageText(suggestion)
                 },
-                onTranslate = { message, locale ->
-                    vm.translateMessage(message, locale)
-                },
+                // AI translate button removed by user request (Phase 21); leaving onTranslate
+                // unwired keeps the icon hidden (ChatMessageActions guards on null).
                 onClearTranslation = { message ->
                     vm.clearTranslationField(message.id)
                 },

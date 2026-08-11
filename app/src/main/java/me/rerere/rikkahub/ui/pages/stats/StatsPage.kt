@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Card
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
@@ -39,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.rikkahub.R
@@ -95,6 +97,85 @@ fun StatsPage(vm: StatsVM = koinViewModel()) {
                     StatsGrid(
                         stats = stats,
                         modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                }
+                // Phase 21 — token attribution: which chats and which models are actually
+                // spending the tokens, so runaway usage can be traced to a source.
+                if (stats.byModel.isNotEmpty()) {
+                    item {
+                        TokenBreakdownCard(
+                            title = stringResource(R.string.stats_page_tokens_by_model),
+                            rows = stats.byModel,
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
+                    }
+                }
+                if (stats.topConversations.isNotEmpty()) {
+                    item {
+                        TokenBreakdownCard(
+                            title = stringResource(R.string.stats_page_tokens_by_conversation),
+                            rows = stats.topConversations,
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Phase 21 — a token-spend breakdown list. Each row shows the share of total spend as a
+ * bar plus the prompt/completion split, so a chat or model that dominates usage is obvious
+ * at a glance.
+ */
+@Composable
+private fun TokenBreakdownCard(
+    title: String,
+    rows: List<TokenAttribution>,
+    modifier: Modifier = Modifier,
+) {
+    val max = rows.maxOfOrNull { it.totalTokens }?.coerceAtLeast(1L) ?: 1L
+    Card(modifier = modifier, colors = CustomColors.cardColorsOnSurfaceContainer) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            rows.forEach { row ->
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = row.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Text(
+                            text = formatTokens(row.totalTokens),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = { (row.totalTokens.toFloat() / max.toFloat()).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.stats_page_token_row_detail,
+                            formatTokens(row.promptTokens),
+                            formatTokens(row.completionTokens),
+                            row.messageCount,
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

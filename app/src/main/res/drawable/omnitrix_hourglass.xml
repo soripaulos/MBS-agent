@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Omniverse dial = the app's primary mark. Kept as its own file so the selector's
-     variant switch and the launcher icon share one source of truth. Replace with
-     authentic art keeping this file name (see docs/omnitrix-assets.md). -->
+<!-- Omnitrix hourglass mark: the app's primary identity (green hourglass on black).
+     Geometry: bold convex top/bottom edges pinching to a narrow waist. Sized to sit
+     inside the adaptive-icon safe zone when used as an icon foreground. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

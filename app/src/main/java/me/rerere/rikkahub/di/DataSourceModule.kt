@@ -151,6 +151,18 @@ val dataSourceModule = module {
     single { get<AppDatabase>().agentRunDao() }
     single { AgentRunRepository(get()) }
     single { AgentRunBootRecovery(context = get(), repository = get()) }
+    // Phase 21 — periodic stalled-work sweep (restarts turns/cron runs that died before
+    // completing). Hosted by StalledRunWatchdogWorker, scheduled from RikkaHubApp.
+    single {
+        me.rerere.rikkahub.service.StalledRunWatchdog(
+            chatService = get(),
+            conversationRepo = get(),
+            agentRunRepo = get(),
+            scheduledJobRepo = get(),
+            cronJobScheduler = get(),
+            settingsStore = get(),
+        )
+    }
 
     single { McpOAuthStore(context = get(), json = get()) }
     single {

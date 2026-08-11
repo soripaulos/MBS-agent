@@ -27,6 +27,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -398,7 +399,26 @@ private fun ChainOfThoughtScope.AskUserToolStep(
     // The old strict parser threw on the first deviation and runCatching collapsed the
     // whole card to an empty column with a lone Submit button. Parse defensively,
     // per-element, and never let one malformed entry sink the rest.
-    val questions = remember(arguments) { parseAskUserQuestions(arguments) }
+    // Phase 21 — reparse trigger: the "Reload" affordance below bumps this so a card that
+// rendered before the streamed arguments were complete can be rebuilt without losing the turn.
+    var reparseKey by remember { mutableIntStateOf(0) }
+    val questions = remember(arguments, reparseKey) { parseAskUserQuestions(arguments) }
+    // Guaranteed-answerable fallback: if nothing parsed (malformed / still-streaming args)
+    // we synthesise ONE free-text question so the card always has a usable input instead
+    // of a lone Submit button.
+    val effectiveQuestions = remember(questions) {
+        questions.ifEmpty {
+            listOf(
+                AskUserQuestion(
+                    id = "answer",
+                    question = "",  // rendered from a string resource below
+                    options = emptyList(),
+                    selectionType = "text",
+                )
+            )
+        }
+    }
+    val usedFallback = questions.isEmpty()
 
     // Track answers for text/single questions
     val answers = remember { mutableStateMapOf<String, String>() }
@@ -426,9 +446,9 @@ private fun ChainOfThoughtScope.AskUserToolStep(
         },
         label = {
             Text(
-                text = if (questions.size <= 1) firstQuestion else stringResource(
+                text = if (effectiveQuestions.size <= 1) firstQuestion else stringResource(
                     R.string.chat_message_tool_ask_questions,
-                    questions.size
+                    effectiveQuestions.size
                 ),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.secondary,
@@ -442,10 +462,37 @@ private fun ChainOfThoughtScope.AskUserToolStep(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                questions.forEach { q ->
+                if (usedFallback && isPending) {
+                    // The model's arguments couldn't be parsed into questions. Show the raw
+                    // request so the user can still see what was asked, plus Reload.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.chat_message_tool_ask_unparsed),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { reparseKey++ }) {
+                            Text(stringResource(R.string.chat_message_tool_ask_reload))
+                        }
+                    }
+                    val raw = remember(arguments) { arguments.toString().take(600) }
+                    if (raw.isNotBlank() && raw != "{}") {
+                        Text(
+                            text = raw,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                effectiveQuestions.forEach { q ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = q.question,
+                            text = q.question.ifBlank { stringResource(R.string.chat_message_tool_ask_fallback_prompt) },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -560,7 +607,7 @@ private fun ChainOfThoughtScope.AskUserToolStep(
                         onClick = {
                             val answerPayload = buildJsonObject {
                                 put("answers", buildJsonObject {
-                                    questions.forEach { q ->
+                                    effectiveQuestions.forEach { q ->
                                         when (q.selectionType) {
                                             "multi" -> put(q.id, JsonPrimitive(multiAnswers[q.id]?.joinToString(", ") ?: ""))
                                             else -> put(q.id, JsonPrimitive(answers[q.id] ?: ""))
@@ -570,7 +617,7 @@ private fun ChainOfThoughtScope.AskUserToolStep(
                             }
                             onToolAnswer(tool.toolCallId, answerPayload.toString())
                         },
-                        enabled = questions.all { q ->
+                        enabled = effectiveQuestions.all { q ->
                             when (q.selectionType) {
                                 "multi" -> !multiAnswers[q.id].isNullOrEmpty()
                                 else -> !answers[q.id].isNullOrBlank()

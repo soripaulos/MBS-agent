@@ -12,6 +12,9 @@ import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
 import me.rerere.rikkahub.data.db.dao.getMessageCountPerDay
 import me.rerere.rikkahub.data.db.dao.getTokenStats
+import me.rerere.rikkahub.data.db.dao.getTokensByConversation
+import me.rerere.rikkahub.data.db.dao.getTokensByModel
+import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -26,6 +29,19 @@ data class AppStats(
     val totalCachedTokens: Long = 0L,
     val conversationsPerDay: Map<LocalDate, Int> = emptyMap(),
     val launchCount: Int = 0,
+    // Phase 21 — token attribution: where the spend actually goes.
+    val topConversations: List<TokenAttribution> = emptyList(),
+    val byModel: List<TokenAttribution> = emptyList(),
+)
+
+/** One row of the "what consumed tokens" breakdown. */
+data class TokenAttribution(
+    val label: String,
+    val totalTokens: Long,
+    val promptTokens: Long,
+    val completionTokens: Long,
+    val messageCount: Int,
+    val cachedTokens: Long = 0L,
 )
 
 class StatsVM(
@@ -69,6 +85,37 @@ class StatsVM(
 
         val launchCount = settingsStore.settingsFlow.value.launchCount
 
+        // Token attribution. Conversation titles come straight from the join; model rows
+        // carry a model UUID that we resolve to a display name via Settings (falling back
+        // to the raw id so an since-deleted model still shows up rather than vanishing).
+        val settings = settingsStore.settingsFlow.value
+        val topConversations = withContext(Dispatchers.IO) {
+            runCatching { messageNodeDAO.getTokensByConversation(limit = 15) }.getOrDefault(emptyList())
+        }.map { row ->
+            TokenAttribution(
+                label = row.title.ifBlank { row.conversationId.take(8) },
+                totalTokens = row.totalTokens,
+                promptTokens = row.promptTokens,
+                completionTokens = row.completionTokens,
+                messageCount = row.messageCount,
+            )
+        }
+        val byModel = withContext(Dispatchers.IO) {
+            runCatching { messageNodeDAO.getTokensByModel(limit = 12) }.getOrDefault(emptyList())
+        }.map { row ->
+            val name = runCatching {
+                kotlin.uuid.Uuid.parse(row.model).let { id -> settings.findModelById(id)?.displayName }
+            }.getOrNull()
+            TokenAttribution(
+                label = name ?: row.model.take(8),
+                totalTokens = row.totalTokens,
+                promptTokens = row.promptTokens,
+                completionTokens = row.completionTokens,
+                messageCount = row.messageCount,
+                cachedTokens = row.cachedTokens,
+            )
+        }
+
         _stats.value = AppStats(
             isLoading = false,
             totalConversations = totalConversations,
@@ -78,6 +125,8 @@ class StatsVM(
             totalCachedTokens = tokenStats.cachedTokens,
             conversationsPerDay = conversationsPerDay,
             launchCount = launchCount,
+            topConversations = topConversations,
+            byModel = byModel,
         )
     }
 }

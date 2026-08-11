@@ -53,11 +53,12 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          # Single-ABI build: produces only app-arm64-v8a-debug.apk (see app/build.gradle.kts)
+          ./gradlew assembleDebug -PsingleAbi=arm64-v8a --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         if: success()
         with:
           name: debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk

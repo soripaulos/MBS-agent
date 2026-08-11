@@ -1318,6 +1318,51 @@ class ChatService(
     }
 
     /**
+     * Phase 21 — restart a turn that stopped before completing. Called by
+     * [StalledRunWatchdog] for conversations whose hosting process died mid-generation
+     * (no error card, no live job — just a stranded turn).
+     *
+     * "Incomplete" means, with NO generation job running:
+     *  - the last message is from the USER (the assistant never replied), or
+     *  - the last assistant message carries a tool that started executing but produced no
+     *    output (GenerationHandler's replay pass will flip it to Denied, then continue).
+     *
+     * A tool still Pending on user approval is NOT incomplete — it's waiting on the human,
+     * and re-entering generation there would orphan the approval card.
+     *
+     * @return true if a resume was started.
+     */
+    suspend fun resumeIfIncomplete(conversationId: Uuid): Boolean {
+        val session = sessions[conversationId]
+        if (session?.getJob()?.isActive == true) return false
+
+        ensureHydrated(conversationId)
+        val conversation = getConversationFlow(conversationId).value
+        val last = conversation.currentMessages.lastOrNull() ?: return false
+
+        val awaitingUser = last.parts.any { p ->
+            p is UIMessagePart.Tool && p.approvalState is ToolApprovalState.Pending
+        }
+        if (awaitingUser) return false
+
+        val incomplete = when {
+            last.role == MessageRole.USER -> true
+            else -> last.parts.any { p ->
+                p is UIMessagePart.Tool && p.executionStartedAt != null && p.output.isEmpty()
+            }
+        }
+        if (!incomplete) return false
+
+        Log.i(TAG, "resumeIfIncomplete: restarting stalled turn for $conversationId")
+        val job = appScope.launch {
+            runCatching { handleMessageComplete(conversationId) }
+                .onFailure { Log.w(TAG, "resumeIfIncomplete: resume failed", it) }
+        }
+        getOrCreateSession(conversationId).setJob(job)
+        return true
+    }
+
+    /**
      * Phase 20 — is this failure worth an automatic retry? Network-shaped errors are;
      * user cancellation and logic errors (bad request, auth) are not.
      */

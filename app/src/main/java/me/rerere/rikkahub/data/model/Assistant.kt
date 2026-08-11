@@ -74,8 +74,8 @@ data class Assistant(
     // manual compress pipeline) before the next turn is generated. The estimate is the
     // previous turn's reported usage (promptTokens + completionTokens), falling back to
     // chars/4 when no usage was reported.
-    val autoCompactEnabled: Boolean = false,
-    val autoCompactThresholdTokens: Int = 80_000,
+    val autoCompactEnabled: Boolean = true,
+    val autoCompactThresholdTokens: Int = 48_000,
     val autoCompactKeepRecentMessages: Int = 16,
     val autoCompactTargetTokens: Int = 2_000,
     // Phase 17 — custom gradient background colors (hex strings "#RRGGBB" or "#AARRGGBB").

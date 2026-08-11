@@ -141,6 +141,12 @@ class RikkaHubApp : Application() {
         // makes background sub-agents survivable across process death.
         runAgentRunBootRecovery()
 
+        // Phase 21 — schedule the stalled-work watchdog (every 15 min): restarts chat turns
+        // and cron runs whose process died mid-flight, so a task never silently gives up.
+        runCatching {
+            me.rerere.rikkahub.service.StalledRunWatchdogWorker.schedule(this)
+        }.onFailure { Log.w(TAG, "failed to schedule StalledRunWatchdogWorker", it) }
+
         // Auto-recover from a prior native crash inside a local-runtime JNI lib
         // (LiteRT-LM 0.11.0 has known SIGSEGVs on the GPU/NNAPI backend during
         // inference on Pixel Tensor-G). If we detect one, force the runtime to

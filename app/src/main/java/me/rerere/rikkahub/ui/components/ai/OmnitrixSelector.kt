@@ -3,6 +3,9 @@ package me.rerere.rikkahub.ui.components.ai
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,7 +16,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
@@ -106,12 +109,29 @@ fun OmnitrixSelectorSheet(
                 modifier = Modifier.size(dialSize),
                 contentAlignment = Alignment.Center,
             ) {
+                // Phase 21 — the dial itself IS the confirm button: tap the Omnitrix core
+                // to transform into the highlighted assistant. Press feedback scales the
+                // core slightly so it reads as pressable.
+                val coreInteraction = remember { MutableInteractionSource() }
+                val corePressed by coreInteraction.collectIsPressedAsState()
+                val coreScale by animateFloatAsState(
+                    targetValue = if (corePressed) 0.92f else 1f,
+                    animationSpec = tween(120),
+                    label = "coreScale",
+                )
                 Image(
                     painter = painterResource(variant.dialDrawableRes()),
-                    contentDescription = null,
+                    contentDescription = stringResource(R.string.omnitrix_selector_transform),
                     modifier = Modifier
                         .size(150.dp)
-                        .graphicsLayer { rotationZ = dialRotation / 2f },
+                        .scale(coreScale)
+                        .graphicsLayer { rotationZ = dialRotation / 2f }
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = coreInteraction,
+                            indication = null,
+                            onClick = { onAssistantSelected(selected) },
+                        ),
                 )
                 assistants.forEachIndexed { index, assistant ->
                     // Slot angle rotates with the dial; slot 'selectedIndex' ends on top.
@@ -171,12 +191,11 @@ fun OmnitrixSelectorSheet(
                 }
             }
 
-            Button(
-                onClick = { onAssistantSelected(selected) },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(stringResource(R.string.omnitrix_selector_transform))
-            }
+            Text(
+                text = stringResource(R.string.omnitrix_selector_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

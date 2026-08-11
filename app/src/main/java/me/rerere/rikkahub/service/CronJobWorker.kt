@@ -296,6 +296,24 @@ class CronJobWorker(
         conversationRepo.insertConversation(conv)
         chatService.initializeConversation(conv.id)
         HeadlessConversations.mark(conv.id)
+        // Phase 21 — scheduled-job delivery. A cron run has no chat surface, so the result
+        // dies in a headless conversation unless the model actively ships it somewhere.
+        // Tell it who it is and how to deliver: with the Telegram tools enabled and a
+        // default chat configured, "send me the result on Telegram" in a job prompt now
+        // works, and a job whose prompt asks for delivery gets it without extra plumbing.
+        // Registered as an addendum (not appended to the user message) so it isn't replayed
+        // into history every turn.
+        me.rerere.rikkahub.data.ai.tools.ConversationSystemAddendum.set(
+            conv.id,
+            buildString {
+                append("You are running as the scheduled job \"${job.name}\" with no interactive user present. ")
+                append("Nobody will read your reply in-app, so if the task's output is meant for the user, ")
+                append("deliver it explicitly: telegram_send_message for text, telegram_send_document / ")
+                append("telegram_send_photo for files (both default to the configured Telegram chat). ")
+                append("Ask no questions — there is nobody to answer. If a required capability is missing, ")
+                append("finish with a one-line explanation of what to enable.")
+            },
+        )
         try {
             chatService.sendMessage(conv.id, listOf(UIMessagePart.Text(prompt)))
             // Wait for the generation job to clear, with a 15-min wall-clock cap.
@@ -310,6 +328,7 @@ class CronJobWorker(
             return Triple("failed", "${t::class.simpleName}: ${t.message.orEmpty()}", conv.id)
         } finally {
             HeadlessConversations.unmark(conv.id)
+            me.rerere.rikkahub.data.ai.tools.ConversationSystemAddendum.clear(conv.id)
         }
     }
 
