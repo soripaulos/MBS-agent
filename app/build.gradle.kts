@@ -25,10 +25,16 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            // -PsingleAbi=arm64-v8a narrows the build to one ABI (CI debug builds use this
-            // so only app-arm64-v8a-debug.apk is produced, which also halves build time).
+            // -PsingleAbi=<abi> narrows the build to one ABI (CI debug builds use this so
+            // only app-<abi>-debug.apk is produced, which also halves build time). In that
+            // mode abiFilters is left UNSET on purpose: AGP rejects abiFilters coexisting
+            // with splits filters once isUniversalApk is false ("Conflicting configuration
+            // ... in ndk abiFilters cannot be present when splits abi filters are set"),
+            // and the splits include below already restricts the packaged ABI.
             val singleAbi = (project.findProperty("singleAbi") as String?)?.takeIf { it.isNotBlank() }
-            abiFilters += singleAbi?.let { listOf(it) } ?: listOf("arm64-v8a", "x86_64")
+            if (singleAbi == null) {
+                abiFilters += listOf("arm64-v8a", "x86_64")
+            }
         }
     }
 
