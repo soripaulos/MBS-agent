@@ -12,6 +12,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.context.LocalSettings
 
+/**
+ * Chat loading indicator. Phase 21: draws the Omnitrix dial (omnitrix_loading, converted
+ * from loading_icon.svg and sized to the drawable it replaced) tinted with the theme
+ * primary. Falls back to the Material indicator when the app-icon style is switched off.
+ */
 @Composable
 fun RabbitLoadingIndicator(modifier: Modifier = Modifier) {
     val useAppIconStyleLoadingIndicator = LocalSettings.current.displaySetting.useAppIconStyleLoadingIndicator
@@ -22,7 +27,7 @@ fun RabbitLoadingIndicator(modifier: Modifier = Modifier) {
             modifier = modifier,
             factory = { context ->
                 ImageView(context).apply {
-                    val drawable = AppCompatResources.getDrawable(context, R.drawable.rabbit) as? AnimatedVectorDrawable
+                    val drawable = AppCompatResources.getDrawable(context, R.drawable.omnitrix_loading) as? AnimatedVectorDrawable
                     setImageDrawable(drawable)
                     drawable?.setTint(primaryColor)
                     drawable?.start()

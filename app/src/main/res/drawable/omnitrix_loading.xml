@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chat loading indicator: the Omnitrix dial. Converted from loading_icon.svg (200x200
+     viewBox) and sized at 128dp to match the indicator it replaces, so every call site
+     keeps its previous footprint. The arms "draw" themselves (trimPathEnd, the AVD
+     equivalent of the SVG's stroke-dashoffset) while the hourglass group pulses.
+     RabbitLoadingIndicator tints this with the theme primary at runtime. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:aapt="http://schemas.android.com/aapt">
+
+  <aapt:attr name="android:drawable">
+    <vector
+      android:width="128dp"
+      android:height="128dp"
+      android:viewportWidth="200"
+      android:viewportHeight="200">
+
+      <!-- Outer dial outline (static, same stroke weight as the hourglass) -->
+      <path
+        android:pathData="M100,100m-95,0a95,95 0,1 1,190 0a95,95 0,1 1,-190 0"
+        android:fillColor="#00000000"
+        android:strokeColor="#8CE63A"
+        android:strokeWidth="12" />
+
+      <group
+        android:name="glass"
+        android:pivotX="100"
+        android:pivotY="100">
+        <path
+          android:name="armTop"
+          android:pathData="M170,48 A95,95 0 0 0 30,48"
+          android:fillColor="#00000000"
+          android:strokeColor="#8CE63A"
+          android:strokeWidth="12"
+          android:strokeLineCap="round"
+          android:strokeLineJoin="round"
+          android:trimPathEnd="0" />
+        <path
+          android:name="armBottom"
+          android:pathData="M30,152 A95,95 0 0 0 170,152"
+          android:fillColor="#00000000"
+          android:strokeColor="#8CE63A"
+          android:strokeWidth="12"
+          android:strokeLineCap="round"
+          android:strokeLineJoin="round"
+          android:trimPathEnd="0" />
+        <path
+          android:name="armLeft"
+          android:pathData="M30,48 L75,100 L30,152"
+          android:fillColor="#00000000"
+          android:strokeColor="#8CE63A"
+          android:strokeWidth="12"
+          android:strokeLineCap="round"
+          android:strokeLineJoin="round"
+          android:trimPathEnd="0" />
+        <path
+          android:name="armRight"
+          android:pathData="M170,48 L125,100 L170,152"
+          android:fillColor="#00000000"
+          android:strokeColor="#8CE63A"
+          android:strokeWidth="12"
+          android:strokeLineCap="round"
+          android:strokeLineJoin="round"
+          android:trimPathEnd="0" />
+      </group>
+    </vector>
+  </aapt:attr>
+
+  <!-- Hourglass pulse (SVG's glassPulse) -->
+  <target android:name="glass">
+    <aapt:attr name="android:animation">
+      <set>
+        <objectAnimator
+          android:propertyName="scaleX"
+          android:valueFrom="1.0"
+          android:valueTo="0.94"
+          android:duration="550"
+          android:repeatCount="infinite"
+          android:repeatMode="reverse"
+          android:interpolator="@android:interpolator/accelerate_decelerate" />
+        <objectAnimator
+          android:propertyName="scaleY"
+          android:valueFrom="1.0"
+          android:valueTo="0.94"
+          android:duration="550"
+          android:repeatCount="infinite"
+          android:repeatMode="reverse"
+          android:interpolator="@android:interpolator/accelerate_decelerate" />
+      </set>
+    </aapt:attr>
+  </target>
+
+  <!-- Arms draw themselves, then restart (SVG's drawArm, looped for a loading state) -->
+  <target android:name="armTop">
+    <aapt:attr name="android:animation">
+      <objectAnimator
+        android:propertyName="trimPathEnd"
+        android:valueFrom="0"
+        android:valueTo="1"
+        android:duration="1400"
+        android:repeatCount="infinite"
+        android:interpolator="@android:interpolator/accelerate_decelerate" />
+    </aapt:attr>
+  </target>
+  <target android:name="armBottom">
+    <aapt:attr name="android:animation">
+      <objectAnimator
+        android:propertyName="trimPathEnd"
+        android:valueFrom="0"
+        android:valueTo="1"
+        android:duration="1400"
+        android:repeatCount="infinite"
+        android:interpolator="@android:interpolator/accelerate_decelerate" />
+    </aapt:attr>
+  </target>
+  <target android:name="armLeft">
+    <aapt:attr name="android:animation">
+      <objectAnimator
+        android:propertyName="trimPathEnd"
+        android:valueFrom="0"
+        android:valueTo="1"
+        android:duration="1400"
+        android:repeatCount="infinite"
+        android:interpolator="@android:interpolator/accelerate_decelerate" />
+    </aapt:attr>
+  </target>
+  <target android:name="armRight">
+    <aapt:attr name="android:animation">
+      <objectAnimator
+        android:propertyName="trimPathEnd"
+        android:valueFrom="0"
+        android:valueTo="1"
+        android:duration="1400"
+        android:repeatCount="infinite"
+        android:interpolator="@android:interpolator/accelerate_decelerate" />
+    </aapt:attr>
+  </target>
+</animated-vector>
