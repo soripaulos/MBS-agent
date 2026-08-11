@@ -58,6 +58,23 @@ android {
     }
 
     signingConfigs {
+        // Stable debug key. Without this, every machine (and every CI runner) generates its
+        // own ~/.android/debug.keystore, so consecutive debug APKs are signed with DIFFERENT
+        // keys and Android refuses to install one over the other ("App not installed" /
+        // signature mismatch), forcing an uninstall that wipes app data. Pinning the
+        // keystore in-repo makes every debug build interchangeable, forever.
+        //
+        // Committing it is safe and conventional: these are the well-known public debug
+        // credentials (androiddebugkey / "android") that ship with every Android SDK, the
+        // key signs only .debug builds, and release signing still comes from local.properties
+        // + an ignored keystore. It is NOT a secret and grants nothing on Play.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+
         create("release") {
             val localProperties = Properties()
             val localPropertiesFile = rootProject.file("local.properties")
@@ -96,6 +113,9 @@ android {
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
         }
         debug {
+            // Explicit so the pinned in-repo debug.keystore is unmistakably the one used
+            // (AGP would default to it anyway, but this survives future refactors).
+            signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
