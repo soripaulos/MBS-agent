@@ -94,9 +94,20 @@ val DEFAULT_PROVIDERS = listOf(
     ),
     ProviderSetting.Codex(
         id = DEFAULT_CODEX_PROVIDER_ID,
-        name = "Codex",
+        // Named for what users look for ("ChatGPT"), not just the internal product name.
+        // NOTE: the built-in reconcile in PreferencesStore copies description /
+        // shortDescription onto already-persisted providers but NOT name, so existing
+        // installs keep seeing "Codex" — the descriptions below are what make it findable
+        // there; the rename only lands on fresh installs.
+        name = "ChatGPT (Codex)",
         enabled = false,
         builtIn = true,
+        shortDescription = {
+            Text(text = stringResource(R.string.provider_codex_short_desc))
+        },
+        description = {
+            Text(text = stringResource(R.string.provider_codex_desc))
+        },
     ),
     ProviderSetting.Google(
         id = Uuid.parse("6ab18148-c138-4394-a46f-1cd8c8ceaa6d"),

@@ -141,6 +141,29 @@ Some dangerous shell patterns are hard-blocked regardless.
 
 ---
 
+## 6b. Using your ChatGPT subscription instead of an API key
+
+Settings → Providers → **ChatGPT (Codex)** (shown as just "Codex" on installs that
+predate the rename) → **Sign in**. A browser opens, you approve with your ChatGPT
+account, and that's it — no API key anywhere.
+
+- Billing goes against your **ChatGPT Plus/Pro/Business subscription**, not per-token API
+  credit. Requests are sent to ChatGPT's Codex backend with your OAuth token.
+- **Multiple accounts** are supported; each shows its token status and you can switch or
+  re-authorise per account.
+- The provider surfaces your **remaining 5-hour and weekly limits**, so you can see how
+  much subscription quota is left before hitting a wall.
+- Tokens are stored in the encrypted credential store. They're sealed to this device, so a
+  backup restore onto a different device (or after an uninstall) needs a fresh sign-in.
+- Models appear automatically after sign-in; if the list looks stale, re-open the provider
+  to refresh it.
+
+Use this when you want your existing subscription to do the work; keep an API-key OpenAI
+provider alongside it if you also need pay-as-you-go access or models the Codex backend
+doesn't expose.
+
+---
+
 ## 7. MCP servers (incl. OAuth)
 
 Settings → MCP connects external Model Context Protocol servers (extra tools). Streamable

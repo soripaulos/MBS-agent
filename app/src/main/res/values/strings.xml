@@ -1863,6 +1863,10 @@
   <!-- Phase 20: app data SAF provider -->
   <string name="app_data_provider_title">Omnitrix App Data</string>
 
+  <!-- ChatGPT / Codex OAuth provider discoverability -->
+  <string name="provider_codex_short_desc">Sign in with ChatGPT — no API key</string>
+  <string name="provider_codex_desc">Use your ChatGPT Plus/Pro/Business subscription instead of paying per token for an API key. Open this provider and tap Sign in: a browser opens, you approve with your ChatGPT account, and the app talks to ChatGPT\'s Codex backend on your behalf. Supports multiple accounts and shows your remaining 5-hour and weekly limits.</string>
+
   <!-- Phase 21: token stats breakdown, ask_user fallback, dial-as-button -->
   <string name="stats_page_tokens_by_model">Token spend by model</string>
   <string name="stats_page_tokens_by_conversation">Top conversations by token spend</string>
