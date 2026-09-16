@@ -12,7 +12,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // Mirrors :app — -PsingleAbi=<abi> narrows the build to one ABI. Compiling
+            // llama.cpp is by far the most expensive step in a clean build, so CI debug
+            // builds (which package a single ABI anyway) must not pay for both.
+            val singleAbi = (project.findProperty("singleAbi") as String?)?.takeIf { it.isNotBlank() }
+            abiFilters += singleAbi?.let { listOf(it) } ?: listOf("arm64-v8a", "x86_64")
         }
 
         externalNativeBuild {
