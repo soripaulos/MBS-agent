@@ -155,8 +155,13 @@ account, and that's it — no API key anywhere.
   much subscription quota is left before hitting a wall.
 - Tokens are stored in the encrypted credential store. They're sealed to this device, so a
   backup restore onto a different device (or after an uninstall) needs a fresh sign-in.
-- Models appear automatically after sign-in; if the list looks stale, re-open the provider
-  to refresh it.
+- Models appear automatically after sign-in. To re-pull them later (ChatGPT added a model,
+  or the first pull ran before an app update), tap **Sync models from ChatGPT** on the
+  provider page — the toast tells you how many models your account returned. The
+  **Models** tab lists the same set and lets you add a slug by hand if you want to try one
+  the catalog doesn't advertise.
+- Which models you get is decided by ChatGPT, not the app: the account's Codex catalog is
+  listed as-is, minus entries the backend marks as hidden or retired.
 
 Use this when you want your existing subscription to do the work; keep an API-key OpenAI
 provider alongside it if you also need pay-as-you-go access or models the Codex backend

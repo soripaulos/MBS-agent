@@ -1812,6 +1812,9 @@
   <string name="codex_reasoning_auto_unsupported">Codex does not support automatic reasoning effort. Select Low, Medium, High, or Extra High.</string>
   <string name="codex_response_failed">The Codex response failed.</string>
   <string name="codex_monthly_limit">Monthly limit</string>
+  <string name="codex_sync_models">Sync models from ChatGPT</string>
+  <string name="codex_models_synced">%1$d model(s) available from your ChatGPT account</string>
+  <string name="codex_models_sync_failed">Could not load models from ChatGPT</string>
   <string name="codex_oauth_ports_unavailable">Codex sign-in cannot start because the local callback ports are in use. Close the app using them and try again.</string>
 
   <!-- Phase 17: plan mode, auto-compaction, session search, gradient colors, queue, app icon -->

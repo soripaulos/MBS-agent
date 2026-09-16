@@ -64,6 +64,7 @@ fun CodexProviderConfigure(
     val toaster = LocalToaster.current
     val context = LocalContext.current
     val canEnable = accounts.any { it.enabled && it.tokenStatus != CodexTokenStatus.INVALID }
+    var syncingModels by remember { mutableStateOf(false) }
 
     LaunchedEffect(oauthStatus) {
         when (val status = oauthStatus) {
@@ -111,6 +112,36 @@ fun CodexProviderConfigure(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.codex_sign_in))
+        }
+
+        // Models are pulled once at sign-in; this re-pulls them without a re-login, which
+        // matters when ChatGPT adds a model to the account or when an earlier pull was
+        // filtered down to a single entry.
+        OutlinedButton(
+            onClick = {
+                syncingModels = true
+                scope.launch {
+                    runCatching {
+                        providerManager.getProviderByType(provider).listModels(provider)
+                    }.onSuccess { models ->
+                        onEdit(provider.copy(models = mergeCodexModels(provider.models, models)))
+                        toaster.show(
+                            context.getString(R.string.codex_models_synced, models.size),
+                            type = ToastType.Success,
+                        )
+                    }.onFailure { error ->
+                        toaster.show(
+                            error.message ?: context.getString(R.string.codex_models_sync_failed),
+                            type = ToastType.Error,
+                        )
+                    }
+                    syncingModels = false
+                }
+            },
+            enabled = canEnable && !syncingModels,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.codex_sync_models))
         }
 
         Row(

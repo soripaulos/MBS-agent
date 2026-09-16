@@ -88,41 +88,65 @@ class CodexProvider(
                 if (response.code == 401) repository.markInvalid(account.id)
                 error("Failed to get Codex models: ${response.code} ${response.body.string()}")
             }
-            val models = json.parseToJsonElement(response.body.string())
-                .jsonObject["models"]?.jsonArray
+            val root = json.parseToJsonElement(response.body.string()).jsonObject
+            // The catalog has moved around between Codex releases; accept every shape
+            // we have seen rather than silently returning nothing.
+            val models = (root["models"] ?: root["data"] ?: root["items"])?.jsonArray
                 ?: return@withContext emptyList()
-            models.mapNotNull { element ->
-                val item = element.jsonObject
-                if (item["visibility"]?.jsonPrimitive?.contentOrNull != "list") {
-                    return@mapNotNull null
-                }
-                val slug = item["slug"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val modalities = item["input_modalities"]?.jsonArray
-                    ?.mapNotNull { modality ->
-                        when (modality.jsonPrimitive.contentOrNull) {
-                            "text" -> Modality.TEXT
-                            "image" -> Modality.IMAGE
-                            else -> null
-                        }
-                    }
-                    ?.ifEmpty { listOf(Modality.TEXT) }
-                    ?: listOf(Modality.TEXT, Modality.IMAGE)
-                Model(
-                    modelId = slug,
-                    displayName = item["display_name"]?.jsonPrimitive?.contentOrNull ?: slug,
-                    inputModalities = modalities,
-                    abilities = buildList {
-                        add(ModelAbility.TOOL)
-                        if (
-                            item["supported_reasoning_levels"]?.jsonArray?.isNotEmpty() == true ||
-                            item["supports_reasoning_summaries"]?.jsonPrimitive?.booleanOrNull == true
-                        ) {
-                            add(ModelAbility.REASONING)
-                        }
-                    },
-                )
-            }
+            models.mapNotNull { element -> element.jsonObject.toCodexModel() }
+                .distinctBy(Model::modelId)
         }
+
+    /**
+     * Turns one catalog entry into a [Model], or null when the entry is not usable.
+     *
+     * NOTE: this deliberately does NOT require `visibility == "list"`. That flag only says
+     * whether the Codex CLI shows the model in its *default* picker — models flagged
+     * anything else (or carrying no flag at all) are still callable by slug, and filtering
+     * on it left accounts seeing a single model even though the catalog returned several.
+     * Only entries the backend explicitly hides or retires are dropped.
+     */
+    private fun JsonObject.toCodexModel(): Model? {
+        val visibility = this["visibility"]?.jsonPrimitive?.contentOrNull?.lowercase()
+        if (visibility in HIDDEN_VISIBILITIES) return null
+        val slug = (this["slug"] ?: this["id"] ?: this["model"])
+            ?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val modalities = this["input_modalities"]?.jsonArray
+            ?.mapNotNull { modality ->
+                when (modality.jsonPrimitive.contentOrNull) {
+                    "text" -> Modality.TEXT
+                    "image" -> Modality.IMAGE
+                    else -> null
+                }
+            }
+            ?.ifEmpty { listOf(Modality.TEXT) }
+            ?: listOf(Modality.TEXT, Modality.IMAGE)
+        val reasoningLevels = (
+            this["supported_reasoning_levels"] ?: this["supported_reasoning_efforts"]
+            )?.jsonArray
+        return Model(
+            modelId = slug,
+            displayName = this["display_name"]?.jsonPrimitive?.contentOrNull ?: slug,
+            inputModalities = modalities,
+            abilities = buildList {
+                add(ModelAbility.TOOL)
+                if (
+                    reasoningLevels?.isNotEmpty() == true ||
+                    this@toCodexModel["supports_reasoning_summaries"]
+                        ?.jsonPrimitive?.booleanOrNull == true
+                ) {
+                    add(ModelAbility.REASONING)
+                }
+            },
+            contextLength = (
+                this["context_window"]
+                    ?: this["max_context_window"]
+                    ?: this["max_context_window_tokens"]
+                )?.jsonPrimitive?.intOrNull,
+        )
+    }
 
     override suspend fun generateText(
         providerSetting: ProviderSetting.Codex,
@@ -327,6 +351,12 @@ class CodexProvider(
         const val CODEX_API_BASE = "${CodexAccountRepository.CODEX_BASE_URL}/codex"
         const val CLIENT_VERSION = "0.139.0"
         const val DEFAULT_INSTRUCTIONS = "You are a helpful assistant."
+
+        /**
+         * Visibility values that mean "do not offer this model". Everything else —
+         * including "list", an unknown value, or no value at all — is offered.
+         */
+        val HIDDEN_VISIBILITIES = setOf("hidden", "none", "internal", "deleted", "retired")
         val FINAL_RESPONSE_EVENTS = setOf(
             "response.completed",
             "response.done",
