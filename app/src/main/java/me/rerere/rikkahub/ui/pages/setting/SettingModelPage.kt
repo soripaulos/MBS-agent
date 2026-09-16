@@ -5,32 +5,45 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelType
 import me.rerere.ai.provider.ProviderSetting
@@ -38,10 +51,11 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AiBrain01
 import me.rerere.hugeicons.stroke.AiEditing
 import me.rerere.hugeicons.stroke.ArrowRight01
-import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.datastore.AutoCompactionThresholdMode
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.ui.components.ai.ModelListSheet
+import me.rerere.rikkahub.ui.components.ai.ReasoningButton
 import me.rerere.rikkahub.ui.components.ai.rememberModelListState
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
@@ -122,20 +136,14 @@ private fun ModelSettingsPage(settings: Settings, vm: SettingVM, contentPadding:
                 modelId = settings.fastModelId,
                 providers = settings.providers,
                 onSelect = { vm.updateSettings(settings.copy(fastModelId = it.id)) },
+                reasoningLevel = settings.fastModelReasoningLevel,
+                onUpdateReasoningLevel = {
+                    vm.updateSettings(settings.copy(fastModelReasoningLevel = it))
+                },
             )
         }
         item {
-            ModelSettingItem(
-                title = stringResource(R.string.setting_model_page_title_model),
-                description = stringResource(R.string.setting_model_page_title_model_desc),
-                modelId = settings.titleModelId,
-                providers = settings.providers,
-                onSelect = { vm.updateSettings(settings.copy(titleModelId = it.id)) },
-                onClear = { vm.updateSettings(settings.copy(titleModelId = null)) },
-            )
-        }
-        item {
-            SuggestionModelSettingItem(
+            SuggestionSettingItem(
                 settings = settings,
                 vm = vm,
             )
@@ -167,79 +175,318 @@ private fun ModelSettingsPage(settings: Settings, vm: SettingVM, contentPadding:
                 onSelect = { vm.updateSettings(settings.copy(compressModelId = it.id)) },
             )
         }
+        item {
+            AutoCompactionSettingItem(settings = settings, vm = vm)
+        }
+        item {
+            ResponseStreamRetrySettingItem(settings = settings, vm = vm)
+        }
     }
 }
 
 @Composable
-private fun SuggestionModelSettingItem(
+private fun ResponseStreamRetrySettingItem(
     settings: Settings,
     vm: SettingVM,
 ) {
-    val title = stringResource(R.string.setting_model_page_suggestion_model)
-    val state = rememberModelListState(
-        modelId = settings.suggestionModelId,
-        providers = settings.providers,
-        type = ModelType.CHAT,
-    )
+    var maxRetries by remember(settings.responseStreamMaxRetries) {
+        mutableStateOf(settings.responseStreamMaxRetries.toString())
+    }
 
-    Column {
-        CardGroup(title = { Text(title) }) {
+    CardGroup {
+        item(
+            headlineContent = {
+                Text(stringResource(R.string.setting_model_page_response_stream_retries))
+            },
+            supportingContent = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.setting_model_page_response_stream_retries_desc))
+                    OutlinedTextField(
+                        value = maxRetries,
+                        onValueChange = { value ->
+                            maxRetries = value.filter(Char::isDigit).take(2)
+                            maxRetries.toIntOrNull()?.let { parsed ->
+                                val normalized = parsed.coerceIn(0, 10)
+                                if (normalized != settings.responseStreamMaxRetries) {
+                                    vm.updateSettings { current ->
+                                        current.copy(responseStreamMaxRetries = normalized)
+                                    }
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        label = {
+                            Text(stringResource(R.string.setting_model_page_response_stream_retries_input))
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { focusState ->
+                                if (!focusState.isFocused) {
+                                    val normalized = maxRetries.toIntOrNull()
+                                        ?.coerceIn(0, 10)
+                                        ?: settings.responseStreamMaxRetries
+                                    maxRetries = normalized.toString()
+                                    vm.updateSettings { current ->
+                                        if (current.responseStreamMaxRetries == normalized) {
+                                            current
+                                        } else {
+                                            current.copy(responseStreamMaxRetries = normalized)
+                                        }
+                                    }
+                                }
+                            },
+                    )
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun AutoCompactionSettingItem(
+    settings: Settings,
+    vm: SettingVM,
+) {
+    var threshold by remember(settings.autoCompactionThresholdPercent) {
+        mutableFloatStateOf(settings.autoCompactionThresholdPercent.toFloat())
+    }
+    var tokenThreshold by remember(settings.autoCompactionThresholdTokensK) {
+        mutableStateOf(settings.autoCompactionThresholdTokensK.toString())
+    }
+    var compactionTargetTokensK by remember(settings.contextCompactionTargetTokensK) {
+        mutableStateOf(settings.contextCompactionTargetTokensK?.toString().orEmpty())
+    }
+    var keepRecentToolCalls by remember(settings.autoCompactionKeepRecentToolCalls) {
+        mutableStateOf(settings.autoCompactionKeepRecentToolCalls.toString())
+    }
+
+    CardGroup {
+        item(
+            headlineContent = {
+                Text(stringResource(R.string.setting_model_page_enable_auto_compaction))
+            },
+            supportingContent = {
+                Text(stringResource(R.string.setting_model_page_enable_auto_compaction_desc))
+            },
+            trailingContent = {
+                Switch(
+                    checked = settings.enableAutoCompaction,
+                    onCheckedChange = {
+                        vm.updateSettings { current -> current.copy(enableAutoCompaction = it) }
+                    },
+                )
+            },
+        )
+        if (settings.enableAutoCompaction) {
             item(
-                headlineContent = { Text(stringResource(R.string.setting_model_page_enable_suggestion)) },
-                trailingContent = {
-                    Switch(
-                        checked = settings.enableSuggestion,
-                        onCheckedChange = {
-                            vm.updateSettings(settings.copy(enableSuggestion = it))
+                headlineContent = {
+                    Text(stringResource(R.string.setting_model_page_auto_compaction_threshold))
+                },
+                supportingContent = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(stringResource(R.string.setting_model_page_auto_compaction_threshold_desc))
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            val modes = listOf(
+                                AutoCompactionThresholdMode.PERCENT to
+                                    stringResource(R.string.setting_model_page_auto_compaction_mode_percent),
+                                AutoCompactionThresholdMode.TOKENS to
+                                    stringResource(R.string.setting_model_page_auto_compaction_mode_tokens),
+                            )
+                            modes.forEachIndexed { index, (mode, label) ->
+                                SegmentedButton(
+                                    shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                                    selected = settings.autoCompactionThresholdMode == mode,
+                                    onClick = {
+                                        if (settings.autoCompactionThresholdMode != mode) {
+                                            vm.updateSettings { current ->
+                                                current.copy(autoCompactionThresholdMode = mode)
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    Text(label)
+                                }
+                            }
                         }
+                        if (settings.autoCompactionThresholdMode == AutoCompactionThresholdMode.PERCENT) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Slider(
+                                    value = threshold,
+                                    onValueChange = { value ->
+                                        threshold = (value / 5f).toInt().times(5).toFloat()
+                                    },
+                                    onValueChangeFinished = {
+                                        vm.updateSettings { current ->
+                                            current.copy(
+                                                autoCompactionThresholdPercent = threshold.toInt()
+                                            )
+                                        }
+                                    },
+                                    valueRange = 5f..95f,
+                                    steps = 17,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text("${threshold.toInt()}%")
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = tokenThreshold,
+                                onValueChange = { value ->
+                                    tokenThreshold = value.filter(Char::isDigit).take(7)
+                                    tokenThreshold.toIntOrNull()?.let { parsed ->
+                                        val normalized = parsed.coerceIn(1, Int.MAX_VALUE / 1_000)
+                                        if (normalized != settings.autoCompactionThresholdTokensK) {
+                                            vm.updateSettings { current ->
+                                                current.copy(autoCompactionThresholdTokensK = normalized)
+                                            }
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                suffix = { Text("k") },
+                                label = {
+                                    Text(stringResource(R.string.setting_model_page_auto_compaction_tokens))
+                                },
+                                supportingText = {
+                                    Text(stringResource(R.string.setting_model_page_auto_compaction_tokens_desc))
+                                },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onFocusChanged { focusState ->
+                                        if (!focusState.isFocused) {
+                                            val parsed = tokenThreshold.toIntOrNull()
+                                            if (parsed == null) {
+                                                tokenThreshold = settings.autoCompactionThresholdTokensK.toString()
+                                            } else {
+                                                val normalized = parsed.coerceIn(1, Int.MAX_VALUE / 1_000)
+                                                tokenThreshold = normalized.toString()
+                                                if (normalized != settings.autoCompactionThresholdTokensK) {
+                                                    vm.updateSettings { current ->
+                                                        current.copy(autoCompactionThresholdTokensK = normalized)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                            )
+                        }
+                    }
+                },
+            )
+            item(
+                headlineContent = {
+                    Text(stringResource(R.string.setting_model_page_auto_compaction_keep_tool_calls))
+                },
+                supportingContent = {
+                    OutlinedTextField(
+                        value = keepRecentToolCalls,
+                        onValueChange = { value ->
+                            keepRecentToolCalls = value.filter(Char::isDigit).take(4)
+                            keepRecentToolCalls.toIntOrNull()?.let { parsed ->
+                                val normalized = parsed.coerceIn(0, 1_000)
+                                if (normalized != settings.autoCompactionKeepRecentToolCalls) {
+                                    vm.updateSettings { current ->
+                                        current.copy(autoCompactionKeepRecentToolCalls = normalized)
+                                    }
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        supportingText = {
+                            Text(
+                                stringResource(
+                                    R.string.setting_model_page_auto_compaction_keep_tool_calls_desc
+                                )
+                            )
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { focusState ->
+                                if (!focusState.isFocused) {
+                                    val normalized = keepRecentToolCalls.toIntOrNull()
+                                        ?.coerceIn(0, 1_000)
+                                        ?: settings.autoCompactionKeepRecentToolCalls
+                                    keepRecentToolCalls = normalized.toString()
+                                    if (normalized != settings.autoCompactionKeepRecentToolCalls) {
+                                        vm.updateSettings { current ->
+                                            current.copy(autoCompactionKeepRecentToolCalls = normalized)
+                                        }
+                                    }
+                                }
+                            },
                     )
                 },
             )
-            if (settings.enableSuggestion) {
-                item(
-                    onClick = { state.open() },
-                    headlineContent = { Text(title) },
-                    trailingContent = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(
-                                text = state.currentModel?.displayName
-                                    ?: stringResource(R.string.model_list_select_model),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (state.currentModel != null) {
-                                IconButton(
-                                    onClick = { vm.updateSettings(settings.copy(suggestionModelId = null)) },
-                                    modifier = Modifier.size(20.dp),
-                                ) {
-                                    Icon(HugeIcons.Cancel01, contentDescription = null, modifier = Modifier.size(14.dp))
-                                }
-                            } else {
-                                Icon(
-                                    HugeIcons.ArrowRight01,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                )
+        }
+        item(
+            headlineContent = {
+                Text(stringResource(R.string.setting_model_page_context_compaction_target))
+            },
+            supportingContent = {
+                OutlinedTextField(
+                    value = compactionTargetTokensK,
+                    onValueChange = { value ->
+                        compactionTargetTokensK = value.filter(Char::isDigit).take(7)
+                        val normalized = compactionTargetTokensK.toIntOrNull()
+                            ?.coerceIn(1, Int.MAX_VALUE / 1_000)
+                        if (normalized != settings.contextCompactionTargetTokensK) {
+                            vm.updateSettings { current ->
+                                current.copy(contextCompactionTargetTokensK = normalized)
                             }
                         }
                     },
+                    singleLine = true,
+                    suffix = { Text("k") },
+                    supportingText = {
+                        Text(stringResource(R.string.setting_model_page_context_compaction_target_desc))
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { focusState ->
+                            if (!focusState.isFocused) {
+                                val normalized = compactionTargetTokensK.toIntOrNull()
+                                    ?.coerceIn(1, Int.MAX_VALUE / 1_000)
+                                val normalizedValue = normalized?.toString().orEmpty()
+                                compactionTargetTokensK = normalizedValue
+                                if (normalized != settings.contextCompactionTargetTokensK) {
+                                    vm.updateSettings { current ->
+                                        current.copy(contextCompactionTargetTokensK = normalized)
+                                    }
+                                }
+                            }
+                        },
                 )
-            }
-        }
-        Text(
-            text = stringResource(R.string.setting_model_page_suggestion_model_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+            },
         )
     }
+}
 
-    ModelListSheet(state = state, onSelect = { vm.updateSettings(settings.copy(suggestionModelId = it.id)) })
+@Composable
+private fun SuggestionSettingItem(
+    settings: Settings,
+    vm: SettingVM,
+) {
+    CardGroup {
+        item(
+            headlineContent = { Text(stringResource(R.string.setting_model_page_enable_suggestion)) },
+            trailingContent = {
+                Switch(
+                    checked = settings.enableSuggestion,
+                    onCheckedChange = {
+                        vm.updateSettings(settings.copy(enableSuggestion = it))
+                    }
+                )
+            },
+        )
+    }
 }
 
 @Composable
@@ -249,7 +496,8 @@ private fun ModelSettingItem(
     modelId: Uuid?,
     providers: List<ProviderSetting>,
     onSelect: (Model) -> Unit,
-    onClear: (() -> Unit)? = null,
+    reasoningLevel: ReasoningLevel? = null,
+    onUpdateReasoningLevel: ((ReasoningLevel) -> Unit)? = null,
 ) {
     val state = rememberModelListState(
         modelId = modelId,
@@ -275,20 +523,25 @@ private fun ModelSettingItem(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (onClear != null && state.currentModel != null) {
-                            IconButton(onClick = onClear, modifier = Modifier.size(20.dp)) {
-                                Icon(HugeIcons.Cancel01, contentDescription = null, modifier = Modifier.size(14.dp))
-                            }
-                        } else {
-                            Icon(
-                                HugeIcons.ArrowRight01,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
+                        Icon(
+                            HugeIcons.ArrowRight01,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
                     }
                 },
             )
+            if (reasoningLevel != null && onUpdateReasoningLevel != null) {
+                item(
+                    headlineContent = { Text(stringResource(R.string.assistant_page_thinking_budget)) },
+                    trailingContent = {
+                        ReasoningButton(
+                            reasoningLevel = reasoningLevel,
+                            onUpdateReasoningLevel = onUpdateReasoningLevel,
+                        )
+                    },
+                )
+            }
         }
         Text(
             text = description,

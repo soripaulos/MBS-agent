@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.ComposeFoundationFlags
 import androidx.compose.runtime.Composer
 import androidx.compose.runtime.tooling.ComposeStackTraceMode
@@ -20,8 +21,10 @@ import java.io.File
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import me.rerere.common.android.Logging
 import me.rerere.common.android.appTempFolder
 import com.whl.quickjs.android.QuickJSLoader
 import me.rerere.rikkahub.di.appModule
@@ -31,6 +34,9 @@ import me.rerere.rikkahub.di.viewModelModule
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.ai.tools.HeadlessConversations
+import me.rerere.rikkahub.data.sync.BackupManager
+import me.rerere.rikkahub.data.sync.RestoreFailedException
+import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.rikkahub.service.WebServerService
 import me.rerere.rikkahub.utils.CrashHandler
 import me.rerere.rikkahub.utils.DatabaseUtil
@@ -51,6 +57,24 @@ const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Restore files and settings before eager Koin singletons or workers can access them.
+        try {
+            val restored = runBlocking(Dispatchers.IO) {
+                BackupManager.applyPendingRestore(this@RikkaHubApp, JsonInstant)
+            }
+            if (restored) {
+                Toast.makeText(this, R.string.backup_page_restore_success, Toast.LENGTH_LONG).show()
+            }
+        } catch (e: RestoreFailedException) {
+            Log.e(TAG, "Backup restore rolled back", e)
+            Toast.makeText(this, "备份恢复失败，已保留原数据。请重新导入备份。", Toast.LENGTH_LONG).show()
+        }
+
+        // :ai (and other sub-:app modules) have no BuildConfig of their own, so this is
+        // how their provider code learns whether it's running a debug build — needed to
+        // gate full request/response body logging the same way HttpLoggingInterceptor
+        // is already gated behind BuildConfig.DEBUG in DataSourceModule.
+        Logging.setDebugLoggingEnabled(BuildConfig.DEBUG)
         startKoin {
             androidLogger()
             androidContext(this@RikkaHubApp)
@@ -84,7 +108,7 @@ class RikkaHubApp : Application() {
         // cleanup workspace temp dirs (proot + rootfs /tmp)
         cleanupWorkspaceTempDirs()
 
-        // check workspace integrity (remove orphaned DB records after backup restore)
+        // check workspace integrity (mark workspaces with missing files as broken after backup restore)
         checkWorkspaceIntegrity()
 
         // sync upload files to DB
@@ -110,6 +134,14 @@ class RikkaHubApp : Application() {
         // sandbox for `.learnings/`, scratch files, and skill state without scoped-
         // storage friction. Termux-style: private, persistent, OS-blessed.
         me.rerere.rikkahub.data.ai.tools.local.AgentWorkspace.init(this)
+
+        // TermuxPreferences is already constructed transitively via eagerlyInitChatService()
+        // above (ChatService -> LocalTools -> TermuxPreferences), which runs its init{}
+        // restore + persister wiring for TermuxIntegration.lastVerifiedOkAtMs (GitHub #14).
+        // This explicit touch is a decoupled safety net so that persistence still initializes
+        // if that construction chain is later refactored or throws before reaching
+        // termuxPreferences.
+        eagerlyInitTermuxPreferences()
 
         // Copy any default skills bundled in assets/default-skills/* into the user's skills
         // dir on first launch. SkillManager guards via a per-skill .seeded sentinel so this
@@ -347,6 +379,16 @@ class RikkaHubApp : Application() {
             get<me.rerere.rikkahub.service.ChatService>()
         } catch (t: Throwable) {
             Log.e(TAG, "eagerlyInitChatService failed", t)
+        }
+    }
+
+    // Decoupled safety net: normally a no-op since eagerlyInitChatService() already
+    // constructed TermuxPreferences transitively; kept independent in case that chain changes.
+    private fun eagerlyInitTermuxPreferences() {
+        try {
+            get<me.rerere.rikkahub.data.preferences.TermuxPreferences>()
+        } catch (t: Throwable) {
+            Log.e(TAG, "eagerlyInitTermuxPreferences failed", t)
         }
     }
 

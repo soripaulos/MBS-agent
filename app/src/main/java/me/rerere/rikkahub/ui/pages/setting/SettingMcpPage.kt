@@ -2,31 +2,22 @@
 
 package me.rerere.rikkahub.ui.pages.setting
 
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.AlertCircle
-import me.rerere.hugeicons.stroke.ArrowDown01
-import me.rerere.hugeicons.stroke.ArrowUp01
-import me.rerere.hugeicons.stroke.FileImport
-import me.rerere.hugeicons.stroke.MessageBlocked
-import me.rerere.hugeicons.stroke.Add01
-import me.rerere.hugeicons.stroke.Settings03
-import me.rerere.hugeicons.stroke.Console
-import me.rerere.hugeicons.stroke.Delete01
-import me.rerere.hugeicons.stroke.Upload02
-import me.rerere.hugeicons.stroke.Cancel01
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.FlowRowOverflow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,8 +27,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,23 +46,22 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SwipeToDismissBox
-import me.rerere.rikkahub.ui.components.ui.Switch
-import me.rerere.rikkahub.ui.components.ui.SwitchSize
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -77,29 +69,43 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import me.rerere.ai.core.InputSchema
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.AlertCircle
+import me.rerere.hugeicons.stroke.ArrowDown01
+import me.rerere.hugeicons.stroke.ArrowUp01
+import me.rerere.hugeicons.stroke.Cancel01
+import me.rerere.hugeicons.stroke.Delete01
+import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.hugeicons.stroke.McpServer
+import me.rerere.hugeicons.stroke.MessageBlocked
+import me.rerere.hugeicons.stroke.View
+import me.rerere.hugeicons.stroke.ViewOff
+import me.rerere.hugeicons.stroke.Settings03
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.mcp.McpCommonOptions
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
-import me.rerere.rikkahub.data.ai.mcp.McpCommonOptions
-import me.rerere.rikkahub.data.ai.mcp.McpOAuthConfig
 import me.rerere.rikkahub.data.ai.mcp.McpStatus
 import me.rerere.rikkahub.data.ai.mcp.McpTool
-import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthManager
-import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthStatus
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.FormItem
+import me.rerere.rikkahub.ui.components.ui.Switch
+import me.rerere.rikkahub.ui.components.ui.SwitchSize
 import me.rerere.rikkahub.ui.components.ui.Tag
 import me.rerere.rikkahub.ui.components.ui.TagType
 import me.rerere.rikkahub.ui.hooks.EditState
@@ -107,6 +113,7 @@ import me.rerere.rikkahub.ui.hooks.EditStateContent
 import me.rerere.rikkahub.ui.hooks.useEditState
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.ui.theme.extendColors
+import me.rerere.rikkahub.utils.writeClipboardText
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 
@@ -114,20 +121,25 @@ import org.koin.compose.koinInject
 fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val mcpConfigs = settings.mcpServers
-    val oauthManager = koinInject<McpOAuthManager>()
-    // Upsert by id so saving (or persisting a draft before OAuth sign-in) is idempotent and
-    // never creates a duplicate server for the same id.
-    val persistServer: (McpServerConfig) -> Unit = { cfg ->
-        val current = vm.settings.value.mcpServers
-        val updated = if (current.any { it.id == cfg.id }) {
-            current.map { if (it.id == cfg.id) cfg else it }
-        } else {
-            current + cfg
-        }
-        vm.updateSettings(vm.settings.value.copy(mcpServers = updated))
+    val creationState = useEditState<McpServerConfig> {
+        vm.updateSettings(
+            settings.copy(
+                mcpServers = mcpConfigs + it
+            )
+        )
     }
-    val creationState = useEditState<McpServerConfig>(onUpdate = persistServer)
-    val editState = useEditState<McpServerConfig>(onUpdate = persistServer)
+    val editState = useEditState<McpServerConfig> { newConfig ->
+        vm.updateSettings(
+            settings.copy(
+                mcpServers = mcpConfigs.map {
+                    if (it.id == newConfig.id) {
+                        newConfig
+                    } else {
+                        it
+                    }
+                }
+            ))
+    }
     var showImportDialog by remember { mutableStateOf(false) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
@@ -145,14 +157,14 @@ fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
                             showImportDialog = true
                         }
                     ) {
-                        Icon(HugeIcons.FileImport, null)
+                        Icon(HugeIcons.FileImport, stringResource(R.string.setting_mcp_page_import_title))
                     }
                     IconButton(
                         onClick = {
                             creationState.open(McpServerConfig.StreamableHTTPServer())
                         }
                     ) {
-                        Icon(HugeIcons.Add01, null)
+                        Icon(HugeIcons.Add01, stringResource(R.string.add))
                     }
                 },
                 scrollBehavior = scrollBehavior,
@@ -167,6 +179,7 @@ fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
         val scope = rememberCoroutineScope()
         val state = rememberPullToRefreshState()
         val loading = status.values.any { it == McpStatus.Connecting || it is McpStatus.Reconnecting }
+        val layoutDirection = LocalLayoutDirection.current
         PullToRefreshBox(
             isRefreshing = loading,
             onRefresh = {
@@ -175,13 +188,18 @@ fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
                 }
             },
             state = state,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.fillMaxSize()
         ) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(16.dp)
+                contentPadding = PaddingValues(
+                    start = innerPadding.calculateStartPadding(layoutDirection) + 16.dp,
+                    top = innerPadding.calculateTopPadding() + 16.dp,
+                    end = innerPadding.calculateEndPadding(layoutDirection) + 16.dp,
+                    bottom = innerPadding.calculateBottomPadding() + 16.dp,
+                )
             ) {
                 items(mcpConfigs, key = { it.id }) { mcpConfig ->
                     McpServerItem(
@@ -190,7 +208,6 @@ fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
                             editState.open(mcpConfig)
                         },
                         onDelete = {
-                            oauthManager.signOut(mcpConfig.id.toString())
                             vm.updateSettings(
                                 settings.copy(
                                     mcpServers = mcpConfigs.filter { it.id != mcpConfig.id }
@@ -217,8 +234,8 @@ fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
             }
         }
     }
-    McpServerConfigModal(creationState, onPersist = persistServer)
-    McpServerConfigModal(editState, onPersist = persistServer)
+    McpServerConfigModal(creationState)
+    McpServerConfigModal(editState)
     if (showImportDialog) {
         McpImportModal(
             onDismiss = { showImportDialog = false },
@@ -243,6 +260,42 @@ private fun McpServerItem(
     val status by mcpManager.getStatus(item).collectAsStateWithLifecycle(McpStatus.Idle)
     val dismissBoxState = rememberSwipeToDismissBoxState()
     val scope = rememberCoroutineScope()
+    var errorDetail by remember { mutableStateOf<McpStatus.Error?>(null) }
+
+    errorDetail?.let { error ->
+        val context = LocalContext.current
+        val fullText = error.detail ?: error.message
+        AlertDialog(
+            onDismissRequest = { errorDetail = null },
+            title = { Text(item.commonOptions.name.ifBlank { "MCP" }) },
+            text = {
+                SelectionContainer {
+                    Text(
+                        text = fullText,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        context.writeClipboardText(fullText)
+                        errorDetail = null
+                    }
+                ) {
+                    Text(stringResource(R.string.copy))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { errorDetail = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
     SwipeToDismissBox(
         state = dismissBoxState,
         backgroundContent = {
@@ -263,7 +316,7 @@ private fun McpServerItem(
                         onDelete()
                     }
                 ) {
-                    Icon(HugeIcons.Delete01, null)
+                    Icon(HugeIcons.Delete01, stringResource(R.string.delete))
                 }
             }
         },
@@ -296,6 +349,10 @@ private fun McpServerItem(
                         modifier = Modifier.size(24.dp)
                     )
                     is McpStatus.Error -> Icon(HugeIcons.AlertCircle, null)
+                    McpStatus.NeedsAuthorization -> Icon(HugeIcons.AlertCircle, null)
+                    McpStatus.Authorizing -> CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
 
                 Column(
@@ -334,13 +391,41 @@ private fun McpServerItem(
                         }
                     }
                     if (status is McpStatus.Error) {
+                        val error = status as McpStatus.Error
                         Text(
-                            text = (status as McpStatus.Error).message,
+                            text = error.message,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             maxLines = 3,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { errorDetail = error },
                         )
+                    }
+                    if (status == McpStatus.NeedsAuthorization) {
+                        val context = LocalContext.current
+                        Text(
+                            text = "需要 OAuth 授权",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Button(
+                            onClick = { mcpManager.startAuthorization(item, context) },
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                        ) {
+                            Text("OAuth 授权")
+                        }
+                    }
+                    if (status == McpStatus.Authorizing) {
+                        Text(
+                            text = "正在授权，请在浏览器中完成…",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        TextButton(
+                            onClick = { mcpManager.cancelAuthorization(item) },
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                        ) {
+                            Text("取消授权")
+                        }
                     }
                 }
 
@@ -349,7 +434,10 @@ private fun McpServerItem(
                         onEdit(item)
                     }
                 ) {
-                    Icon(HugeIcons.Settings03, null)
+                    Icon(
+                        imageVector = HugeIcons.Settings03,
+                        contentDescription = stringResource(R.string.edit)
+                    )
                 }
             }
         }
@@ -357,10 +445,7 @@ private fun McpServerItem(
 }
 
 @Composable
-private fun McpServerConfigModal(
-    state: EditState<McpServerConfig>,
-    onPersist: (McpServerConfig) -> Unit,
-) {
+private fun McpServerConfigModal(state: EditState<McpServerConfig>) {
     state.EditStateContent { config, updateValue ->
         val pagerState = rememberPagerState { 2 }
         val scope = rememberCoroutineScope()
@@ -414,8 +499,7 @@ private fun McpServerConfigModal(
                         0 -> {
                             McpCommonOptionsConfigure(
                                 config = config,
-                                update = updateValue,
-                                onPersist = onPersist,
+                                update = updateValue
                             )
                         }
 
@@ -449,8 +533,7 @@ private fun McpServerConfigModal(
 @Composable
 private fun McpCommonOptionsConfigure(
     config: McpServerConfig,
-    update: (McpServerConfig) -> Unit,
-    onPersist: (McpServerConfig) -> Unit,
+    update: (McpServerConfig) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -636,11 +719,6 @@ private fun McpCommonOptionsConfigure(
 
         HorizontalDivider()
 
-        // OAuth 认证
-        McpOAuthSection(config = config, update = update, onPersist = onPersist)
-
-        HorizontalDivider()
-
         // 请求头配置
         FormItem(
             label = {
@@ -656,6 +734,7 @@ private fun McpCommonOptionsConfigure(
                 config.commonOptions.headers.forEachIndexed { index, header ->
                     var headerName by remember(header.first) { mutableStateOf(header.first) }
                     var headerValue by remember(header.second) { mutableStateOf(header.second) }
+                    var headerValueVisible by rememberSaveable { mutableStateOf(false) }
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -708,6 +787,15 @@ private fun McpCommonOptionsConfigure(
                                 },
                                 label = { Text(stringResource(R.string.setting_mcp_page_header_value)) },
                                 modifier = Modifier.fillMaxWidth(),
+                                visualTransformation = if (headerValueVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(onClick = { headerValueVisible = !headerValueVisible }) {
+                                        Icon(
+                                            if (headerValueVisible) HugeIcons.ViewOff else HugeIcons.View,
+                                            contentDescription = stringResource(if (headerValueVisible) R.string.accessibility_hide_password else R.string.accessibility_show_password)
+                                        )
+                                    }
+                                },
                                 placeholder = { Text(stringResource(R.string.setting_mcp_page_header_value_placeholder)) }
                             )
                         }
@@ -758,125 +846,6 @@ private fun McpCommonOptionsConfigure(
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.setting_mcp_page_add_header))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun McpOAuthSection(
-    config: McpServerConfig,
-    update: (McpServerConfig) -> Unit,
-    onPersist: (McpServerConfig) -> Unit,
-) {
-    val oauthManager = koinInject<McpOAuthManager>()
-    val serverId = config.id.toString()
-    val oauthEnabled = config.commonOptions.oauth?.enabled == true
-    val status by oauthManager.statusFor(serverId)
-        .collectAsStateWithLifecycle(initialValue = oauthManager.currentStatus(serverId))
-
-    FormItem(
-        label = { Text(stringResource(R.string.setting_mcp_page_oauth)) },
-        description = { Text(stringResource(R.string.setting_mcp_page_oauth_desc)) }
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(stringResource(R.string.setting_mcp_page_oauth))
-                Spacer(Modifier.weight(1f))
-                Switch(
-                    checked = oauthEnabled,
-                    onCheckedChange = { enabled ->
-                        update(
-                            config.clone(
-                                commonOptions = config.commonOptions.copy(
-                                    oauth = McpOAuthConfig(
-                                        enabled = enabled,
-                                        scope = config.commonOptions.oauth?.scope.orEmpty(),
-                                    )
-                                )
-                            )
-                        )
-                    }
-                )
-            }
-
-            if (oauthEnabled) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    when (val s = status) {
-                        McpOAuthStatus.Authorizing -> {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                            Text(
-                                text = stringResource(R.string.setting_mcp_page_oauth_status_authorizing),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-
-                        McpOAuthStatus.Authorized -> Text(
-                            text = stringResource(R.string.setting_mcp_page_oauth_status_authorized),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.extendColors.green6,
-                        )
-
-                        is McpOAuthStatus.Error -> Text(
-                            text = s.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-
-                        McpOAuthStatus.Idle -> Text(
-                            text = stringResource(R.string.setting_mcp_page_oauth_status_idle),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                val authorized = status is McpOAuthStatus.Authorized
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Button(
-                        onClick = {
-                            // Persist the draft (with OAuth enabled) before the browser opens,
-                            // so the server survives the app being backgrounded and reconnects
-                            // automatically once sign-in completes.
-                            val toAuthorize = config.clone(
-                                commonOptions = config.commonOptions.copy(
-                                    oauth = McpOAuthConfig(
-                                        enabled = true,
-                                        scope = config.commonOptions.oauth?.scope.orEmpty(),
-                                    )
-                                )
-                            )
-                            onPersist(toAuthorize)
-                            oauthManager.startLogin(toAuthorize)
-                        },
-                        enabled = status != McpOAuthStatus.Authorizing,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(
-                            stringResource(
-                                if (authorized) R.string.setting_mcp_page_oauth_reauthorize
-                                else R.string.setting_mcp_page_oauth_authorize
-                            )
-                        )
-                    }
-                    if (authorized) {
-                        TextButton(onClick = { oauthManager.signOut(serverId) }) {
-                            Text(stringResource(R.string.setting_mcp_page_oauth_signout))
-                        }
-                    }
                 }
             }
         }
@@ -1006,7 +975,7 @@ private fun McpToolCard(
                 ) {
                     Icon(
                         if (expanded) HugeIcons.ArrowUp01 else HugeIcons.ArrowDown01,
-                        contentDescription = null,
+                        contentDescription = stringResource(if (expanded) R.string.code_block_collapse else R.string.code_block_expand),
                         modifier = Modifier.size(16.dp)
                     )
                 }

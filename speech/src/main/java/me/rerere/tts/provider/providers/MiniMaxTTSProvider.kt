@@ -14,6 +14,7 @@ import me.rerere.tts.model.AudioChunk
 import me.rerere.tts.model.AudioFormat
 import me.rerere.tts.model.TTSRequest
 import me.rerere.tts.provider.TTSProvider
+import me.rerere.tts.provider.TTSProviderException
 import me.rerere.tts.provider.TTSProviderSetting
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -60,7 +61,6 @@ class MiniMaxTTSProvider : TTSProvider<TTSProviderSetting.MiniMax> {
             })
             put("voice_setting", buildJsonObject {
                 put("voice_id", providerSetting.voiceId)
-                put("emotion", providerSetting.emotion)
                 put("speed", providerSetting.speed)
             })
         }
@@ -125,6 +125,14 @@ class MiniMaxTTSProvider : TTSProvider<TTSProviderSetting.MiniMax> {
 
                 is SseEvent.Failure -> {
                     Log.e(TAG, "SSE connection failed", it.throwable)
+                    val statusCode = it.response?.code
+                    if (statusCode != null) {
+                        throw TTSProviderException(
+                            message = "MiniMax TTS streaming failed: HTTP $statusCode",
+                            statusCode = statusCode,
+                            cause = it.throwable
+                        )
+                    }
                     throw it.throwable ?: Exception("MiniMax TTS streaming failed")
                 }
             }

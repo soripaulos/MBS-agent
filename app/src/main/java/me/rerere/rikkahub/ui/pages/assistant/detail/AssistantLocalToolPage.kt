@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.pages.assistant.detail
 
 import android.Manifest
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -46,6 +47,7 @@ import me.rerere.rikkahub.data.ai.tools.local.PermissionHelper
 import me.rerere.rikkahub.data.ai.tools.local.TermuxIntegration
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.telegram.TelegramBotPreferences
+import me.rerere.rikkahub.shizuku.ShizukuManager
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.context.LocalToaster
@@ -54,6 +56,9 @@ import me.rerere.rikkahub.utils.writeClipboardText
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
+import rikka.shizuku.Shizuku
+
+private const val TAG = "AssistantLocalToolPage"
 
 @Composable
 fun AssistantLocalToolPage(id: String) {
@@ -129,6 +134,21 @@ private fun AssistantLocalToolContent(
     // rather than letting the user enable a tool that would only ever error.
     val hasNfc = remember {
         ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_NFC)
+    }
+
+    // Shizuku's permission result arrives asynchronously via this listener, not an Activity
+    // callback (see ShizukuManager.requestPermission), so requestPermission() below needs one
+    // registered to satisfy that contract. This page doesn't surface the result in its own UI
+    // (Settings -> Shizuku owns the status display); it just logs the outcome.
+    DisposableEffect(Unit) {
+        val permissionResult = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
+            val granted = grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED
+            Log.d(TAG, "Shizuku permission request result: granted=$granted")
+        }
+        ShizukuManager.addRequestPermissionResultListener(permissionResult)
+        onDispose {
+            ShizukuManager.removeRequestPermissionResultListener(permissionResult)
+        }
     }
 
     var showTermuxPostGrantDialog by remember { mutableStateOf(false) }
@@ -1033,20 +1053,6 @@ private fun AssistantLocalToolContent(
                     )
                 }
             )
-            item(
-                headlineContent = {
-                    Text(stringResource(R.string.assistant_page_local_tools_web_fetch_title))
-                },
-                supportingContent = {
-                    Text(stringResource(R.string.assistant_page_local_tools_web_fetch_desc))
-                },
-                trailingContent = {
-                    PermissionedSwitch(
-                        checked = assistant.localTools.contains(LocalToolOption.WebFetch),
-                        onCheckedChange = { toggleLocalTool(LocalToolOption.WebFetch, it) },
-                    )
-                }
-            )
         }
 
         // Phase 25 — Phase 3 second cut + ExternalStorage + Archive.
@@ -1144,6 +1150,46 @@ private fun AssistantLocalToolContent(
                     PermissionedSwitch(
                         checked = assistant.localTools.contains(LocalToolOption.Archive),
                         onCheckedChange = { toggleLocalTool(LocalToolOption.Archive, it) },
+                    )
+                }
+            )
+            item(
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_shizuku_title))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_shizuku_desc))
+                },
+                trailingContent = {
+                    // Turning this on fires Shizuku's own consent flow immediately (mirrors the
+                    // request made from Settings -> Shizuku), so the app registers in the
+                    // Shizuku manager's Application list and the user sees the dialog right when
+                    // they express intent, instead of only after visiting that settings page. A
+                    // dead binder means there is nothing to request; Settings -> Shizuku owns the
+                    // setup guidance for that case. Always request when the binder is alive,
+                    // without gating on isPermissionGranted() first: on some devices/manager
+                    // versions checkSelfPermission() reports GRANTED even though the Shizuku
+                    // manager app has never actually seen this app, which made that gate skip the
+                    // request entirely. Shizuku no-ops the dialog when genuinely granted, so this
+                    // is harmless in the healthy case.
+                    PermissionedSwitch(
+                        checked = assistant.localTools.contains(LocalToolOption.Shizuku),
+                        onCheckedChange = { enabled ->
+                            toggleLocalTool(LocalToolOption.Shizuku, enabled)
+                            if (enabled && ShizukuManager.isBinderAlive()) {
+                                val selfPermission = runCatching { Shizuku.checkSelfPermission() }
+                                    .getOrElse { "error: ${it.message}" }
+                                val rationale = runCatching { Shizuku.shouldShowRequestPermissionRationale() }
+                                    .getOrElse { "error: ${it.message}" }
+                                Log.d(
+                                    TAG,
+                                    "Shizuku permission request: binderAlive=true, " +
+                                        "checkSelfPermission=$selfPermission, " +
+                                        "shouldShowRequestPermissionRationale=$rationale"
+                                )
+                                ShizukuManager.requestPermission()
+                            }
+                        },
                     )
                 }
             )
@@ -1563,19 +1609,19 @@ private fun TermuxStatusRowSubtitle(enabled: Boolean) {
     var verifying by remember { mutableStateOf(false) }
     var lastVerifyError by remember { mutableStateOf<String?>(null) }
 
-    // Reads the process-scoped timestamp from TermuxIntegration so a successful verify
-    // earlier in this session keeps the dot green even after the user navigates off the
-    // page and returns. resumeTick triggers a recompute on every onResume.
+    // Reads the process-scoped timestamp from TermuxIntegration, backed by TermuxPreferences
+    // so a successful verify keeps the dot green across app restarts too, not just navigation
+    // within this session (GitHub #14). No recency window: matches SettingTermuxPage's rule.
+    // resumeTick triggers a recompute on every onResume.
     val lastVerifiedOkAt = remember(resumeTick) { TermuxIntegration.lastVerifiedOkAtMs }
-    val verifiedRecently = lastVerifiedOkAt > 0 &&
-        (System.currentTimeMillis() - lastVerifiedOkAt) < 60L * 60 * 1000
+    val verified = lastVerifiedOkAt > 0
 
     val (dotColor, label) = when {
         staticState == TermuxIntegration.State.NOT_INSTALLED ->
             androidx.compose.ui.graphics.Color(0xFFEF4444) to stringResource(R.string.assistant_page_local_tools_termux_status_not_installed)
         staticState == TermuxIntegration.State.NO_PERMISSION ->
             androidx.compose.ui.graphics.Color(0xFFF59E0B) to stringResource(R.string.assistant_page_local_tools_termux_status_no_permission)
-        verifiedRecently ->
+        verified ->
             androidx.compose.ui.graphics.Color(0xFF22C55E) to stringResource(R.string.assistant_page_local_tools_termux_status_ok)
         lastVerifyError != null ->
             androidx.compose.ui.graphics.Color(0xFFEF4444) to (lastVerifyError ?: "")
@@ -1629,7 +1675,8 @@ private fun TermuxStatusRowSubtitle(enabled: Boolean) {
                             toaster.show(lastVerifyError ?: "", type = ToastType.Error)
                         }
                         is TermuxIntegration.VerifyResult.OtherError -> {
-                            TermuxIntegration.clearVerified()
+                            // Transient failure (Termux killed, timeout, etc), not proof the
+                            // setup is wrong: don't erase a previously-verified state over it.
                             resumeTick++
                             lastVerifyError = result.message
                             toaster.show(result.message, type = ToastType.Error)
@@ -1645,7 +1692,7 @@ private fun TermuxStatusRowSubtitle(enabled: Boolean) {
         }
         Text(
             text = if (verifying) verifyingHint
-                   else if (canVerify && !verifiedRecently) "$label · $verifyHint"
+                   else if (canVerify && !verified) "$label · $verifyHint"
                    else label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

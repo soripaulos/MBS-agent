@@ -254,7 +254,7 @@ private fun AssistantItem(
             ) {
                 Icon(
                     imageVector = HugeIcons.Edit03,
-                    contentDescription = null
+                    contentDescription = stringResource(R.string.accessibility_edit_assistant)
                 )
             }
         },

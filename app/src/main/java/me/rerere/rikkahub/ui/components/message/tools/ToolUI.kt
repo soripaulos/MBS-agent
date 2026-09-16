@@ -90,13 +90,19 @@ private object DefaultToolUIRenderer : ToolUIRenderer {
  */
 object ToolUIRegistry {
     private val renderers: Map<String, ToolUIRenderer> = listOf(
+        ContextCompactionToolUI,
         MemoryToolUI,
         SearchWebToolUI,
         ScrapeWebToolUI,
         GetTimeInfoToolUI,
         ClipboardToolUI,
         TextToSpeechToolUI,
+        GetScreenTimeToolUI,
+        CalendarQueryToolUI,
+        CalendarCreateToolUI,
         UseSkillToolUI,
+        RecentChatsToolUI,
+        ConversationSearchToolUI,
         EditFileToolUI,
         ReadFileToolUI,
         WriteFileToolUI,

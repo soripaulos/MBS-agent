@@ -142,12 +142,14 @@ fun SettingSpeechPage(vm: SettingVM = koinViewModel()) {
         containerColor = CustomColors.topBarColors.containerColor,
     ) { innerPadding ->
         when (selectedPage) {
-            0 -> TTSProviderList(
-                settings = settings,
-                onUpdateSettings = vm::updateSettings,
-                onEdit = { editingTTSProvider = it },
-                modifier = Modifier.padding(innerPadding)
-            )
+            0 -> Column(modifier = Modifier.padding(innerPadding)) {
+                TTSProviderList(
+                    settings = settings,
+                    onUpdateSettings = vm::updateSettings,
+                    onEdit = { editingTTSProvider = it },
+                    modifier = Modifier.weight(1f),
+                )
+            }
 
             1 -> ASRProviderList(
                 settings = settings,
@@ -557,6 +559,22 @@ private fun AddASRProviderButton(onAdd: (ASRProviderSetting) -> Unit) {
                     showBottomSheet = true
                 }
             )
+            DropdownMenuItem(
+                text = { Text("MiMo") },
+                onClick = {
+                    currentProvider = ASRProviderSetting.MiMo()
+                    showTypeMenu = false
+                    showBottomSheet = true
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Step") },
+                onClick = {
+                    currentProvider = ASRProviderSetting.Step()
+                    showTypeMenu = false
+                    showBottomSheet = true
+                }
+            )
         }
     }
 
@@ -680,6 +698,9 @@ private fun TTSProviderItem(
                             is TTSProviderSetting.Groq -> "Groq"
                             is TTSProviderSetting.XAI -> "xAI"
                             is TTSProviderSetting.MiMo -> "MiMo"
+                            is TTSProviderSetting.Step -> "Step"
+                            is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
+                            is TTSProviderSetting.FishAudio -> "Fish Audio"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -819,6 +840,8 @@ private fun ASRProviderItem(
                             is ASRProviderSetting.OpenAIRealtime -> "OpenAI Realtime"
                             is ASRProviderSetting.DashScope -> "DashScope"
                             is ASRProviderSetting.Volcengine -> "Volcengine"
+                            is ASRProviderSetting.MiMo -> "MiMo"
+                            is ASRProviderSetting.Step -> "Step"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

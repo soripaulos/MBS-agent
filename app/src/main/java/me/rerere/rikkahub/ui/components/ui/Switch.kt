@@ -3,7 +3,8 @@ package me.rerere.rikkahub.ui.components.ui
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,7 +39,7 @@ enum class SwitchSize {
 @Composable
 fun Switch(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
     size: SwitchSize = SwitchSize.Medium,
     enabled: Boolean = true,
@@ -97,13 +98,14 @@ fun Switch(
             .size(width = dimensions.trackWidth, height = dimensions.trackHeight)
             .clip(RoundedCornerShape(50))
             .background(currentTrackColor)
-            .clickable(
+            .toggleable(
+                value = checked,
                 enabled = enabled,
+                role = Role.Switch,
                 indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) {
-                onCheckedChange(!checked)
-            },
+                interactionSource = remember { MutableInteractionSource() },
+                onValueChange = { onCheckedChange?.invoke(it) }
+            ),
         contentAlignment = Alignment.CenterStart
     ) {
         Box(

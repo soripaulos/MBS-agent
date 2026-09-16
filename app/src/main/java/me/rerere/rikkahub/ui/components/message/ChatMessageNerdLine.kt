@@ -15,6 +15,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.annotation.VisibleForTesting
 import kotlinx.datetime.toJavaLocalDateTime
@@ -25,6 +26,7 @@ import me.rerere.hugeicons.stroke.CoinsDollar
 import me.rerere.hugeicons.stroke.Download04
 import me.rerere.hugeicons.stroke.Upload02
 import me.rerere.hugeicons.stroke.Zap
+import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.utils.formatNumber
 import me.rerere.rikkahub.utils.toFixed
@@ -55,17 +57,26 @@ fun ChatMessageNerdLine(
                         icon = {
                             Icon(
                                 imageVector = HugeIcons.Upload02,
-                                contentDescription = "Input",
+                                contentDescription = stringResource(R.string.accessibility_input_tokens),
                                 tint = color,
                                 modifier = Modifier.size(12.dp)
                             )
                         },
                         content = {
                             Text(text = "${usage.promptTokens.formatNumber()} tokens")
-                            // Cached tokens
-                            if (usage.cachedTokens > 0) {
+                            // Cache split. promptTokens counts hits and misses together on
+                            // every provider that reports a cached figure (DeepSeek's
+                            // prompt_cache_hit_tokens, OpenAI's cached_tokens, Anthropic's
+                            // cache_read), so the miss side and the rate are derivable here
+                            // without any extra request. Requested in issue #23: a total alone
+                            // cannot tell the user whether their prompt prefix is stable.
+                            if (usage.cachedTokens > 0 && usage.promptTokens > 0) {
+                                val hit = usage.cachedTokens.coerceAtMost(usage.promptTokens)
+                                val miss = usage.promptTokens - hit
+                                val rate = hit * 100 / usage.promptTokens
                                 Text(
-                                    text = "(${message.usage?.cachedTokens?.formatNumber() ?: "0"} cached)"
+                                    text = "(${hit.formatNumber()} hit / " +
+                                        "${miss.formatNumber()} miss / $rate%)"
                                 )
                             }
                         }
@@ -75,7 +86,7 @@ fun ChatMessageNerdLine(
                         icon = {
                             Icon(
                                 imageVector = HugeIcons.Download04,
-                                contentDescription = "Output",
+                                contentDescription = stringResource(R.string.accessibility_output_tokens),
                                 modifier = Modifier.size(12.dp)
                             )
                         },
@@ -90,7 +101,7 @@ fun ChatMessageNerdLine(
                             icon = {
                                 Icon(
                                     imageVector = HugeIcons.CoinsDollar,
-                                    contentDescription = "Cost",
+                                    contentDescription = stringResource(R.string.accessibility_cost),
                                     tint = color,
                                     modifier = Modifier.size(12.dp)
                                 )
@@ -112,7 +123,7 @@ fun ChatMessageNerdLine(
                             icon = {
                                 Icon(
                                     imageVector = HugeIcons.Zap,
-                                    contentDescription = "Speed",
+                                    contentDescription = stringResource(R.string.accessibility_speed),
                                     modifier = Modifier.size(12.dp)
                                 )
                             },
@@ -125,7 +136,7 @@ fun ChatMessageNerdLine(
                             icon = {
                                 Icon(
                                     imageVector = HugeIcons.Clock02,
-                                    contentDescription = "Duration",
+                                    contentDescription = stringResource(R.string.accessibility_duration),
                                     modifier = Modifier.size(12.dp)
                                 )
                             },

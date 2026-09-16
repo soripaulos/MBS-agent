@@ -15,6 +15,7 @@ import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.repository.ConversationRepository
+import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.web.startWebServer
 import java.net.ServerSocket
@@ -31,7 +32,13 @@ data class WebServerState(
     val localhostOnly: Boolean = false,
     val hostname: String? = null,
     val address: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    // Identifies which start() attempt produced this state. StateFlow only keeps the
+    // latest value, so a collector sharing a dispatcher with the writer can miss an
+    // intermediate emission entirely (see WebServerService.shouldStopOnError); comparing
+    // this id against the one seen at subscribe time still detects a genuinely new
+    // attempt even when that happens.
+    val startId: Long = 0
 )
 
 class WebServerManager(
@@ -39,6 +46,7 @@ class WebServerManager(
     private val appScope: AppScope,
     private val chatService: ChatService,
     private val conversationRepo: ConversationRepository,
+    private val folderRepo: FolderRepository,
     private val settingsStore: SettingsStore,
     private val filesManager: FilesManager
 ) {
@@ -47,6 +55,8 @@ class WebServerManager(
 
     private val _state = MutableStateFlow(WebServerState())
     val state: StateFlow<WebServerState> = _state.asStateFlow()
+
+    private var nextStartId = 0L
 
     fun start(
         port: Int = 8080,
@@ -58,16 +68,22 @@ class WebServerManager(
             return
         }
 
+        // Assigned synchronously (before the async body below runs) so a caller that reads
+        // state.value.startId right before calling start() gets a baseline that's guaranteed
+        // to differ from every state this attempt writes, regardless of coroutine scheduling.
+        val startId = ++nextStartId
+
         appScope.launch {
             // 仅本机模式绑定回环地址
             val host = if (localhostOnly) HOST_LOOPBACK else HOST_ALL_INTERFACES
             val baseState = WebServerState(
                 port = port,
                 serviceName = serviceName,
-                localhostOnly = localhostOnly
+                localhostOnly = localhostOnly,
+                startId = startId
             )
             try {
-                _state.value = _state.value.copy(isLoading = true)
+                _state.value = _state.value.copy(isLoading = true, startId = startId)
                 Log.i(TAG, "Starting web server on $host:$port")
                 if (!isPortAvailable(port)) {
                     Log.w(TAG, "Port $port is already in use")
@@ -75,7 +91,7 @@ class WebServerManager(
                     return@launch
                 }
                 server = startWebServer(port = port, host = host) {
-                    configureWebApi(context, chatService, conversationRepo, settingsStore, filesManager)
+                    configureWebApi(context, chatService, conversationRepo, folderRepo, settingsStore, filesManager)
                 }.start(wait = false)
 
                 _state.value = baseState.copy(isRunning = true)
@@ -103,6 +119,10 @@ class WebServerManager(
                 _state.value = baseState.copy(error = e.message)
             }
         }
+    }
+
+    fun reportError(message: String) {
+        _state.value = _state.value.copy(isRunning = false, isLoading = false, error = message)
     }
 
     fun stop() {

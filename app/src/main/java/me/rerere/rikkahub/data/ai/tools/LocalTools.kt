@@ -5,9 +5,17 @@ import com.whl.quickjs.wrapper.QuickJSContext
 import com.whl.quickjs.wrapper.QuickJSObject
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -112,6 +120,7 @@ import me.rerere.rikkahub.data.ai.tools.local.batchCopyTool
 import me.rerere.rikkahub.data.ai.tools.local.batchMoveTool
 import me.rerere.rikkahub.data.ai.tools.local.batchDeleteTool
 import me.rerere.rikkahub.data.ai.tools.local.webFetchTool
+import me.rerere.rikkahub.data.ai.tools.local.webExtractTool
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.utils.readClipboardText
@@ -169,6 +178,7 @@ sealed class LocalToolOption {
     @Serializable @SerialName("fingerprint")     data object Fingerprint    : LocalToolOption()
     @Serializable @SerialName("cron_jobs")       data object CronJobs       : LocalToolOption()
     @Serializable @SerialName("ssh")             data object Ssh            : LocalToolOption()
+    @Serializable @SerialName("shizuku")         data object Shizuku        : LocalToolOption()
     @Serializable @SerialName("telegram_bot")    data object TelegramBot    : LocalToolOption()
     @Serializable @SerialName("screen_automation") data object ScreenAutomation : LocalToolOption()
     @Serializable @SerialName("app_launcher")      data object AppLauncher       : LocalToolOption()
@@ -185,7 +195,6 @@ sealed class LocalToolOption {
     @Serializable @SerialName("js_skills")           data object JsSkills           : LocalToolOption()
     @Serializable @SerialName("system_intents")      data object SystemIntents      : LocalToolOption()
     @Serializable @SerialName("browser")             data object Browser            : LocalToolOption()
-    @Serializable @SerialName("web_fetch")           data object WebFetch           : LocalToolOption()
 
     // Phase 17 — cross-session recall (Hermes session_search parity).
     @Serializable @SerialName("session_search")       data object SessionSearch       : LocalToolOption()
@@ -227,7 +236,7 @@ object LocalToolOptionCatalog {
         LocalToolOption.Files, LocalToolOption.McpControl, LocalToolOption.ExternalAutomation,
         LocalToolOption.Reliability, LocalToolOption.SubAgents, LocalToolOption.CostGuards,
         LocalToolOption.Workflows, LocalToolOption.SkillImport, LocalToolOption.JsSkills,
-        LocalToolOption.SystemIntents, LocalToolOption.Browser, LocalToolOption.WebFetch,
+        LocalToolOption.SystemIntents, LocalToolOption.Browser, LocalToolOption.Shizuku,
         LocalToolOption.SessionSearch, LocalToolOption.AgentConfig, LocalToolOption.AppDocs,
         LocalToolOption.SmsSend, LocalToolOption.Wallpaper,
         LocalToolOption.Keystore, LocalToolOption.Nfc, LocalToolOption.ExternalStorage,
@@ -288,7 +297,7 @@ object LocalToolOptionCatalog {
         LocalToolOption.JsSkills -> "js_skills"
         LocalToolOption.SystemIntents -> "system_intents"
         LocalToolOption.Browser -> "browser"
-        LocalToolOption.WebFetch -> "web_fetch"
+        LocalToolOption.Shizuku -> "shizuku"
         LocalToolOption.SessionSearch -> "session_search"
         LocalToolOption.AgentConfig -> "agent_config"
         LocalToolOption.AppDocs -> "app_docs"
@@ -299,6 +308,43 @@ object LocalToolOptionCatalog {
         LocalToolOption.ExternalStorage -> "external_storage"
         LocalToolOption.Archive -> "archive"
         LocalToolOption.KeyboardControl -> "keyboard_control"
+    }
+}
+
+/**
+ * Deserializes a [LocalToolOption] list leniently: any entry whose "type" this build no longer
+ * defines (for example an upstream-only tool such as `screen_time` that the fork removed) is
+ * dropped instead of aborting the whole decode. Without this, restoring a backup exported from
+ * a build with a different tool set fails the entire settings restore with
+ * "Serializer for subclass '<type>' is not found in the polymorphic scope of 'LocalToolOption'"
+ * (see the upstream-2.4.x restore path). Encoding is unchanged and known tools decode exactly
+ * as before, so this only ever discards options this build could not represent anyway.
+ */
+object LenientLocalToolListSerializer : KSerializer<List<LocalToolOption>> {
+    private val delegate = ListSerializer(LocalToolOption.serializer())
+
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun serialize(encoder: Encoder, value: List<LocalToolOption>) {
+        delegate.serialize(encoder, value)
+    }
+
+    override fun deserialize(decoder: Decoder): List<LocalToolOption> {
+        // Per-element tolerance only applies to JSON; any other format uses the strict delegate
+        // (settings are only ever (de)serialized as JSON in this app).
+        val jsonDecoder = decoder as? JsonDecoder ?: return delegate.deserialize(decoder)
+        val element = jsonDecoder.decodeJsonElement()
+        if (element !is JsonArray) {
+            // Not the shape we expect; re-decode the same element strictly rather than guess.
+            return jsonDecoder.json.decodeFromJsonElement(delegate, element)
+        }
+        return element.mapNotNull { item ->
+            try {
+                jsonDecoder.json.decodeFromJsonElement(LocalToolOption.serializer(), item)
+            } catch (e: SerializationException) {
+                null // a tool type this build does not define; drop it, don't fail the import
+            }
+        }
     }
 }
 
@@ -889,6 +935,9 @@ class LocalTools(
             tools.add(sshDownloadTool(context, sshHostRepository))
             tools.add(forgetSshHostKeyTool(context))
         }
+        if (options.contains(LocalToolOption.Shizuku)) {
+            tools.add(me.rerere.rikkahub.data.ai.tools.local.shizukuExecTool(context))
+        }
         if (options.contains(LocalToolOption.TelegramBot)) {
             tools.add(telegramSetTokenTool(telegramBotPreferences, telegramBotClient))
             tools.add(telegramStatusTool(context, telegramBotPreferences, telegramBotClient))
@@ -931,6 +980,8 @@ class LocalTools(
         if (options.contains(LocalToolOption.AppLauncher)) {
             tools.add(me.rerere.rikkahub.data.ai.tools.local.launchAppTool(context, invocationContext, interactiveToolStreamer))
             tools.add(me.rerere.rikkahub.data.ai.tools.local.listInstalledAppsTool(context))
+            tools.add(me.rerere.rikkahub.data.ai.tools.local.listAppActivitiesTool(context))
+            tools.add(me.rerere.rikkahub.data.ai.tools.local.launchActivityTool(context, invocationContext, interactiveToolStreamer))
             tools.add(me.rerere.rikkahub.data.ai.tools.local.openUrlTool(context, invocationContext, interactiveToolStreamer))
         }
         if (options.contains(LocalToolOption.Termux)) {
@@ -1002,7 +1053,13 @@ class LocalTools(
             // can fire — the dispatch tool itself can't read its own coroutine context, but
             // ChatService / cron / workflow / external-automation know who's calling at the
             // moment they construct the tool list.
-            tools.add(me.rerere.rikkahub.subagent.subagentDispatchTool(subAgentEngine, invocationContext))
+            tools.add(
+                me.rerere.rikkahub.subagent.subagentDispatchTool(
+                    subAgentEngine,
+                    invocationContext,
+                    settingsStore.settingsFlow.value.subAgents,
+                )
+            )
             tools.add(me.rerere.rikkahub.subagent.subagentListTool(subAgentRegistry))
             tools.add(me.rerere.rikkahub.subagent.subagentGetTool(subAgentRegistry))
             tools.add(me.rerere.rikkahub.subagent.subagentCancelTool(subAgentRegistry))
@@ -1075,9 +1132,11 @@ class LocalTools(
                 }
             }
         }
-        if (options.contains(LocalToolOption.WebFetch)) {
-            // Lightweight HTTP GET/POST (item 1.2) — backed by the shared OkHttp singleton.
+        // web_fetch/web_extract are always-on unless disabled in Search settings, no
+        // per-assistant toggle.
+        if (settingsStore.settingsFlow.value.enableWebFetchTools) {
             tools.add(webFetchTool(okHttpClient))
+            tools.add(webExtractTool(okHttpClient))
         }
         // Phase 25 — Phase 3 second cut + ExternalStorage + Archive.
         if (options.contains(LocalToolOption.SmsSend)) {

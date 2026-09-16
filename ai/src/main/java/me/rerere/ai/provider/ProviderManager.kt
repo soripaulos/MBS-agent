@@ -2,9 +2,9 @@ package me.rerere.ai.provider
 
 import android.content.Context
 import me.rerere.ai.provider.providers.AICoreProvider
-import me.rerere.ai.provider.providers.ClaudeProvider
-import me.rerere.ai.provider.providers.GoogleProvider
-import me.rerere.ai.provider.providers.OpenAIProvider
+import me.rerere.ai.provider.providers.claude.ClaudeProvider
+import me.rerere.ai.provider.providers.google.GoogleProvider
+import me.rerere.ai.provider.providers.openai.OpenAIProvider
 import okhttp3.OkHttpClient
 
 /**
@@ -56,7 +56,10 @@ class ProviderManager(client: OkHttpClient, context: Context) {
             is ProviderSetting.Claude -> getProvider("claude")
             is ProviderSetting.AICore -> getProvider("aicore")
             is ProviderSetting.LiteRtLocal -> getProvider("local_litert")
+            is ProviderSetting.LlamaCppLocal -> getProvider("local_llamacpp")
             is ProviderSetting.Codex -> getProvider("codex")
+            is ProviderSetting.Grok -> getProvider("grok")
+            is ProviderSetting.GeminiOAuth -> getProvider("gemini_oauth")
         } as Provider<T>
     }
 }

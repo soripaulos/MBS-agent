@@ -26,6 +26,40 @@ import java.util.UUID
 
 private const val TAG = "TtsController"
 
+// A transient synthesis failure (one flaky network call) used to drop that chunk from the
+// read-aloud text forever: awaitOrCreate never retried, and the failed Deferred stayed cached,
+// so even a manual replay of the same chunk id would just replay the same old failure.
+private const val MAX_SYNTHESIS_ATTEMPTS = 2
+
+/**
+ * Retries a cached suspending computation up to [maxAttempts] times, evicting the failed
+ * [kotlinx.coroutines.Deferred] from [cache] before each retry so a fresh attempt (or a later
+ * replay of the same [key]) actually resynthesizes instead of replaying the same cached
+ * failure. Pulled out of [TtsController.awaitOrCreate] as a plain, generic helper - it touches
+ * only the map and the Deferred it's given, never Context or Dispatchers.Main - so the
+ * retry/eviction bookkeeping itself is unit testable without the Android runtime.
+ */
+internal suspend fun <K : Any, V> awaitWithRetry(
+    cache: java.util.concurrent.ConcurrentMap<K, kotlinx.coroutines.Deferred<V>>,
+    key: K,
+    maxAttempts: Int,
+    create: () -> kotlinx.coroutines.Deferred<V>
+): V {
+    var lastError: Throwable? = null
+    repeat(maxAttempts) {
+        val deferred = cache.computeIfAbsent(key) { create() }
+        try {
+            return deferred.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            lastError = e
+            cache.remove(key, deferred)
+        }
+    }
+    throw lastError ?: IllegalStateException("Synthesis retries exhausted for key $key")
+}
+
 /**
  * TTS 控制器（重构版）
  * - 负责文本分片、预取合成、排队播放与状态上报
@@ -52,11 +86,10 @@ class TtsController(
     private val queue: java.util.concurrent.ConcurrentLinkedQueue<TtsChunk> = java.util.concurrent.ConcurrentLinkedQueue()
     private val allChunks: MutableList<TtsChunk> = mutableListOf()
     private val cache = java.util.concurrent.ConcurrentHashMap<UUID, kotlinx.coroutines.Deferred<TTSResponse>>()
-    private var lastPrefetchedIndex: Int = -1
 
     // 行为参数
     private val chunkDelayMs = 120L
-    private val prefetchCount = 4
+    private val prefetchCount = 2
 
     // 状态流（保留与旧版兼容的 StateFlow）
     private val _isAvailable = MutableStateFlow(false)
@@ -140,7 +173,6 @@ class TtsController(
         }
 
         if (workerJob?.isActive != true) startWorker()
-        prefetchFrom((_currentChunk.value).coerceAtLeast(0))
     }
 
     private fun internalReset() {
@@ -153,7 +185,6 @@ class TtsController(
         allChunks.clear()
         cache.values.forEach { it.cancel(CancellationException("Reset")) }
         cache.clear()
-        lastPrefetchedIndex = -1
         _isSpeaking.update { false }
         _currentChunk.update { 0 }
         _totalChunks.update { 0 }
@@ -187,8 +218,9 @@ class TtsController(
 
     /** 跳过下一段（不打断当前正在播放） */
     fun skipNext() {
-        if (queue.isNotEmpty()) {
-            queue.poll()
+        val skipped = queue.poll()
+        if (skipped != null) {
+            cache.remove(skipped.id)
             _totalChunks.update { queue.size }
         }
     }
@@ -203,7 +235,6 @@ class TtsController(
         allChunks.clear()
         cache.values.forEach { it.cancel(CancellationException("Stopped")) }
         cache.clear()
-        lastPrefetchedIndex = -1
         _isSpeaking.update { false }
         _currentChunk.update { 0 }
         _totalChunks.update { 0 }
@@ -247,8 +278,8 @@ class TtsController(
                         )
                     }
 
-                    // 预取下一窗口
-                    prefetchFrom(chunk.index + 1)
+                    // 仅预取当前分片后的固定窗口
+                    prefetchNextChunks(chunk.index)
 
                     val response = try {
                         awaitOrCreate(chunk, provider)
@@ -267,6 +298,11 @@ class TtsController(
                         if (e is CancellationException) throw e
                         Log.e(TAG, "Playback error", e)
                         _error.update { e.message ?: "Audio playback error" }
+                    } finally {
+                        // Playback is strictly sequential and this chunk is now done, so its
+                        // synthesized audio is never needed again: evict it instead of letting
+                        // the cache grow for the rest of a long session.
+                        cache.remove(chunk.id)
                     }
 
                     if (queue.isNotEmpty()) delay(chunkDelayMs)
@@ -282,30 +318,43 @@ class TtsController(
         }
     }
 
-    private fun prefetchFrom(startIndex: Int) {
+    private fun prefetchNextChunks(currentIndex: Int) {
         val provider = currentProvider ?: return
-        val begin = startIndex.coerceAtLeast(lastPrefetchedIndex + 1)
+        val begin = currentIndex + 1
         val endExclusive = (begin + prefetchCount).coerceAtMost(allChunks.size)
         if (begin >= endExclusive) return
 
         for (i in begin until endExclusive) {
             val chunk = allChunks.getOrNull(i) ?: continue
-            cache.computeIfAbsent(chunk.id) {
-                scope.async(Dispatchers.IO) { synthesizer.synthesize(provider, chunk) }
-            }
+            getOrCreateSynthesis(chunk, provider)
         }
-        lastPrefetchedIndex = endExclusive - 1
     }
 
-    private suspend fun awaitOrCreate(chunk: TtsChunk, provider: TTSProviderSetting): TTSResponse {
-        val deferred = cache.computeIfAbsent(chunk.id) {
+    // Retry/eviction bookkeeping lives in the top-level awaitWithRetry (see
+    // TtsControllerAwaitWithRetryTest); this call site just supplies this controller's cache,
+    // key and synthesis lambda.
+    private suspend fun awaitOrCreate(chunk: TtsChunk, provider: TTSProviderSetting): TTSResponse =
+        awaitWithRetry(cache, chunk.id, MAX_SYNTHESIS_ATTEMPTS) {
             scope.async(Dispatchers.IO) { synthesizer.synthesize(provider, chunk) }
         }
-        return try {
-            deferred.await()
-        } finally {
-            // 可按需保留缓存（此处保留，便于重播/重试）
+
+    // Prefetch-only cache warm-up: no retry here on purpose. If this fails, the entry is never
+    // populated (computeIfAbsent doesn't cache a value for a failed async build until awaited),
+    // so the eventual awaitOrCreate call for this chunk goes through awaitWithRetry as usual.
+    private fun getOrCreateSynthesis(
+        chunk: TtsChunk,
+        provider: TTSProviderSetting
+    ): kotlinx.coroutines.Deferred<TTSResponse> {
+        return cache.computeIfAbsent(chunk.id) {
+            scope.async(Dispatchers.IO) { synthesizer.synthesize(provider, chunk) }
         }
     }
     // endregion
+
+    // skipNext's cache.remove(skipped.id) and the playback finally block's cache.remove(chunk.id)
+    // (both above) are one-line evictions against this controller's own live queue/cache/audio
+    // pipeline; exercising them meaningfully needs a real Context, TTSManager and ExoPlayer, none
+    // of which this JVM-only module can construct without Robolectric or mockk (neither is a
+    // dependency here). They stay covered by the awaitWithRetry test only insofar as that proves
+    // the eviction primitive itself is correct; the call sites are not separately unit tested.
 }

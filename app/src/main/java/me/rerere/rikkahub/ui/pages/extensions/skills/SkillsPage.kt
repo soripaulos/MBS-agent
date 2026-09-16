@@ -116,7 +116,7 @@ fun SkillsPage() {
                     )
                 }
                 FloatingActionButton(onClick = { showAddDialog = true }) {
-                    Icon(HugeIcons.Add01, contentDescription = null)
+                    Icon(HugeIcons.Add01, contentDescription = stringResource(R.string.accessibility_add_skill))
                 }
             }
         },
@@ -162,7 +162,7 @@ fun SkillsPage() {
                 }
             }
 
-            items(skills, key = { it.name }) { skill ->
+            items(skills, key = { it.skillDir.absolutePath }) { skill ->
                 SkillCard(
                     skill = skill,
                     onClick = { navController.navigate(Screen.SkillDetail(skill.name)) },

@@ -4,10 +4,16 @@ import kotlinx.datetime.LocalDateTime
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.ContextCompactionView
+import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.ConversationCompaction
+import me.rerere.rikkahub.data.model.MessageNode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
+import kotlin.uuid.Uuid
 
 /**
  * Coverage for [applyTimeReminder].
@@ -34,6 +40,7 @@ class TimeReminderTransformerTest {
         val result = applyTimeReminder(messages)
         // reminder + original message
         assertEquals(2, result.size)
+        assertTrue(result[0].isSynthetic)
         val injected = getMessageText(result[0])
         assertTrue(injected.contains("<time_reminder>"))
         // first-message reminder carries no gap text
@@ -129,8 +136,56 @@ class TimeReminderTransformerTest {
     }
 
     @Test
-    fun `empty messages return empty`() {
+    fun `custom interval should use strict threshold and format minutes`() {
+        val messages = listOf(
+            userMessage("Hello", LocalDateTime(2026, 2, 22, 10, 0, 0)),
+            userMessage("World", LocalDateTime(2026, 2, 22, 10, 30, 0)),
+        )
+        assertEquals(3, applyTimeReminder(messages, intervalMinutes = 30).size)
+        val result = applyTimeReminder(messages, intervalMinutes = 15)
+        assertEquals(4, result.size)
+        assertTrue(getMessageText(result[2]).contains("30 min since last message"))
+    }
+
+    @Test
+    fun `large interval should not overflow or inject prematurely`() {
+        val messages = listOf(
+            userMessage("Hello", LocalDateTime(2026, 2, 22, 10, 0, 0)),
+            userMessage("World", LocalDateTime(2026, 2, 22, 12, 0, 0)),
+        )
+        assertEquals(3, applyTimeReminder(messages, intervalMinutes = 180).size)
+        assertEquals(3, applyTimeReminder(messages, intervalMinutes = Int.MAX_VALUE).size)
+    }
+
+    @Test
+    fun `empty messages should return empty`() {
         val result = applyTimeReminder(emptyList())
         assertEquals(0, result.size)
+    }
+
+    @Test
+    fun `applying the time reminder over the compacted view is identical across two builds`() {
+        val nodes = listOf("one", "two", "three").map { text ->
+            MessageNode(messages = listOf(UIMessage.user(text)))
+        }
+        val conversation = Conversation(
+            assistantId = Uuid.random(),
+            messageNodes = nodes,
+        )
+        val compaction = ConversationCompaction(
+            conversationId = conversation.id,
+            summary = "summary of one",
+            tailStartNodeId = nodes[1].id,
+            sourceEndNodeId = nodes[0].id,
+            summaryModelId = Uuid.random(),
+            isAuto = true,
+            sourceTokenEstimate = 100,
+            createdAt = Instant.now(),
+        )
+
+        val firstResult = applyTimeReminder(ContextCompactionView.build(conversation, compaction).messages)
+        val secondResult = applyTimeReminder(ContextCompactionView.build(conversation, compaction).messages)
+
+        assertEquals(firstResult.map { getMessageText(it) }, secondResult.map { getMessageText(it) })
     }
 }

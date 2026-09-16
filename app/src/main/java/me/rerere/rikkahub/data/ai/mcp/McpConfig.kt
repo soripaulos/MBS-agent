@@ -11,29 +11,44 @@ data class McpCommonOptions(
     val name: String = "",
     val headers: List<Pair<String, String>> = emptyList(),
     val tools: List<McpTool> = emptyList(),
-    // When non-null and enabled, the server is reached using an OAuth 2.1 access token
-    // (Authorization: Bearer ...) obtained via the MCP authorization flow instead of a
-    // statically configured header. Tokens themselves are never stored here — only the
-    // opt-in flag and optional hints live in Settings; secrets live in the encrypted
-    // McpOAuthStore keyed by the server id. Defaulting to null keeps existing stored
-    // configs (and the JSON import format) backward-compatible.
-    val oauth: McpOAuthConfig? = null,
+    val oauth: McpOAuthState? = null,
 )
 
 /**
- * Per-server OAuth opt-in. Only non-secret hints live here; the access/refresh tokens and
- * the dynamically-registered client credentials are persisted separately in the encrypted
- * [me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthStore].
+ * OAuth 2.1 授权状态，遵循 MCP 授权规范 (2025-11-25)。
  *
- * @param enabled whether to authenticate this server with OAuth.
- * @param scope optional space-delimited scope override. When blank, the scopes advertised by
- *   the server's discovery metadata are used (falling back to a sensible default).
+ * 持久化了动态客户端注册结果、授权服务器端点以及令牌，用于对需要
+ * OAuth 授权的 MCP Server 注入 `Authorization: Bearer` 请求头并支持刷新。
  */
 @Serializable
-data class McpOAuthConfig(
+data class McpOAuthState(
     val enabled: Boolean = false,
-    val scope: String = "",
-)
+    val clientId: String? = null,
+    val clientSecret: String? = null,
+    val authorizationEndpoint: String? = null,
+    val tokenEndpoint: String? = null,
+    val registrationEndpoint: String? = null,
+    val redirectUri: String? = null,
+    val scope: String? = null,
+    val accessToken: String? = null,
+    val refreshToken: String? = null,
+    val expiresAt: Long = 0L, // epoch millis, 0 表示未知/不过期
+) {
+    val isAuthorized: Boolean get() = !accessToken.isNullOrBlank()
+
+    // 脱敏 toString，避免 client_secret / token 随 config 打印到日志
+    override fun toString(): String =
+        "McpOAuthState(enabled=$enabled, clientId=$clientId, clientSecret=${clientSecret.masked()}, " +
+            "authorizationEndpoint=$authorizationEndpoint, tokenEndpoint=$tokenEndpoint, " +
+            "registrationEndpoint=$registrationEndpoint, redirectUri=$redirectUri, scope=$scope, " +
+            "accessToken=${accessToken.masked()}, refreshToken=${refreshToken.masked()}, expiresAt=$expiresAt)"
+
+    private fun String?.masked(): String = when {
+        this == null -> "null"
+        isBlank() -> "***"
+        else -> "***(${length})"
+    }
+}
 
 @Serializable
 data class McpTool(
@@ -78,3 +93,10 @@ sealed class McpServerConfig {
         }
     }
 }
+
+/** MCP Server 的连接地址（作为 OAuth 的 canonical resource 标识）。 */
+val McpServerConfig.serverUrl: String
+    get() = when (this) {
+        is McpServerConfig.SseTransportServer -> url
+        is McpServerConfig.StreamableHTTPServer -> url
+    }

@@ -1,9 +1,9 @@
 package me.rerere.rikkahub.di
 
 import kotlinx.serialization.json.Json
-import me.rerere.highlight.Highlighter
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.AILoggingManager
+import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.tools.LocalTools
 import me.rerere.rikkahub.data.ai.tools.local.BiometricResultBuffer
 import me.rerere.rikkahub.data.ai.tools.local.CameraResultBuffer
@@ -17,6 +17,7 @@ import me.rerere.rikkahub.data.telegram.TelegramBotClient
 import me.rerere.rikkahub.data.telegram.TelegramBotPreferences
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.CronJobScheduler
+import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalSessionManager
 import me.rerere.rikkahub.utils.EmojiData
 import me.rerere.rikkahub.utils.EmojiUtils
 import me.rerere.rikkahub.utils.JsonInstant
@@ -28,10 +29,6 @@ import org.koin.dsl.module
 
 val appModule = module {
     single<Json> { JsonInstant }
-
-    single {
-        Highlighter(get())
-    }
 
     single {
         AppEventBus()
@@ -68,7 +65,16 @@ val appModule = module {
         me.rerere.rikkahub.data.telegram.TelegramInteractiveToolStreamer(get(), get(), get(), get())
     }
     single { me.rerere.rikkahub.data.preferences.ToolApprovalPreferences(get()) }
-    single { TelegramBotClient { runCatching { kotlinx.coroutines.runBlocking { get<TelegramBotPreferences>().current().token } }.getOrDefault("") } }
+    single {
+        TelegramBotClient(
+            tokenProvider = { runCatching { kotlinx.coroutines.runBlocking { get<TelegramBotPreferences>().current().token } }.getOrDefault("") },
+            proxyConfigProvider = {
+                runCatching {
+                    kotlinx.coroutines.runBlocking { get<TelegramBotPreferences>().current() }
+                }.getOrDefault(me.rerere.rikkahub.data.telegram.TelegramBotConfig())
+            },
+        )
+    }
     // Phase 24 — Telegram long-poll stall tracker. Shared singleton: TelegramBotService's
     // poll loop calls markUpdate() on every getUpdates; the in-service stall checker and
     // DoctorChecks read it. No cross-dependencies, so no DI-cycle risk.
@@ -202,7 +208,10 @@ val appModule = module {
     }
 
     single {
-        UpdateChecker(get())
+        UpdateChecker(
+            client = get(),
+            appScope = get(),
+        )
     }
 
     single {
@@ -225,26 +234,47 @@ val appModule = module {
         AILoggingManager(get(), get())
     }
 
+    single {
+        WorkspaceTerminalSessionManager(get(), get())
+    }
+
     // Phase 22A: Local-LLM on-device providers
     single { me.rerere.locallm.LocalRuntimePreferences(get()) }
     single { me.rerere.locallm.litert.LiteRtRuntime(get()) }
+    single { me.rerere.llamacpp.LlamaCppRuntime() }
+
+    single {
+        ChatToolFactory(
+            json = get(),
+            memoryRepository = get(),
+            conversationRepository = get(),
+            localTools = get(),
+            mcpManager = get(),
+            skillManager = get(),
+            workspaceRepository = get(),
+        )
+    }
 
     single {
         ChatService(
             context = get(),
             appScope = get(),
+            appEventBus = get(),
             settingsStore = get(),
             conversationRepo = get(),
             memoryRepository = get(),
-            generationHandler = get(),
+            generationLoop = get(),
+            translationHandler = get(),
             templateTransformer = get(),
             providerManager = get(),
             localTools = get(),
+            chatToolFactory = get(),
             mcpManager = get(),
             filesManager = get(),
             skillManager = get(),
             toolApprovalPreferences = get(),
-            workspaceRepository = get()
+            workspaceRepository = get(),
+            folderRepository = get()
         )
     }
 
@@ -254,6 +284,7 @@ val appModule = module {
             appScope = get(),
             chatService = get(),
             conversationRepo = get(),
+            folderRepo = get(),
             settingsStore = get(),
             filesManager = get()
         )
@@ -276,6 +307,9 @@ val appModule = module {
             // LiteRT accelerator status row in the Doctor: shows the persisted backend
             // decision so a silent GPU -> CPU fallback is visible.
             localRuntimePreferences = get(),
+            // Doctor refresh: skills.* and service.mcp_servers rows.
+            skillManager = get(),
+            mcpManager = get(),
         )
     }
 }

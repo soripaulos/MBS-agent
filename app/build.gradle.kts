@@ -19,8 +19,8 @@ android {
         applicationId = "excp.rikkahub"
         minSdk = 26
         targetSdk = 37
-        versionCode = 164
-        versionName = "2.3.1"
+        versionCode = 186
+        versionName = "2.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -94,7 +94,17 @@ android {
                     storePassword = storePasswordValue
                     keyAlias = keyAliasValue
                     keyPassword = keyPasswordValue
+                } else {
+                    val missing = buildList {
+                        if (storeFilePath == null) add("storeFile")
+                        if (storePasswordValue == null) add("storePassword")
+                        if (keyAliasValue == null) add("keyAlias")
+                        if (keyPasswordValue == null) add("keyPassword")
+                    }
+                    logger.warn("Signing config: local.properties is missing $missing, release build will be unsigned")
                 }
+            } else {
+                logger.warn("Signing config: local.properties not found, release build will be unsigned")
             }
         }
     }
@@ -102,12 +112,9 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            optimization {
+                enable = true
+            }
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
@@ -129,7 +136,8 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-        // agent-keyboard IPC: IKeyboardApi.aidl + EditorInfoBundle.aidl in src/main/aidl.
+        // agent-keyboard IPC (IKeyboardApi.aidl + EditorInfoBundle.aidl) and the Shizuku
+        // user service (IShizukuUserService.aidl) both live in src/main/aidl.
         aidl = true
     }
     sourceSets {
@@ -200,7 +208,6 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.browser)
     implementation(libs.androidx.webkit)
-    implementation(libs.androidx.profileinstaller)
     implementation(libs.termux.terminal.view)
     implementation(libs.guava.listenablefuture)
 
@@ -231,7 +238,7 @@ dependencies {
     // Haze (background blur)
     implementation(libs.haze)
     implementation(libs.haze.blur)
-    implementation(libs.haze.blur.materials)
+    implementation(libs.haze.blur.material3)
 
     // koin
     implementation(platform(libs.koin.bom))
@@ -272,6 +279,9 @@ dependencies {
 
     // serialization
     implementation(libs.kotlinx.serialization.json)
+
+    // YAML front matter
+    implementation(libs.snakeyaml)
 
     // zxing
     implementation(libs.zxing.core)
@@ -327,42 +337,48 @@ dependencies {
     implementation(libs.sqlite.android)
 
     // Google Play Services Location (FusedLocationProvider)
-    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation(libs.play.services.location)
     // kotlinx.coroutines.tasks.await for Task<*> (was previously transitive via Firebase)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
+    implementation(libs.kotlinx.coroutines.play.services)
 
     // AndroidX Biometric (BiometricPrompt)
-    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+    implementation(libs.androidx.biometric)
 
     // AndroidX Media — MediaSessionCompat, MediaButtonReceiver, NotificationCompat.MediaStyle
-    implementation("androidx.media:media:1.7.0")
+    implementation(libs.androidx.media)
 
     // AndroidX DocumentFile — Phase 25 SAF tree traversal for the ExternalStorage tools
     // (USB / SD / Downloads / cloud DocumentsProvider access via persisted tree grants).
-    implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation(libs.androidx.documentfile)
 
     // modules
     implementation(project(":ai"))
     implementation(project(":local-llm"))
+    implementation(project(":llama-cpp"))
     implementation(project(":web"))
     implementation(project(":document"))
     implementation(project(":highlight"))
     implementation(project(":search"))
     implementation(project(":speech"))
+    implementation(project(":videogen"))
     implementation(project(":common"))
     implementation(project(":material3"))
     implementation(project(":workspace"))
+    implementation(project(":oauth"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(kotlin("reflect"))
 
     // SSH client (Mwiede fork — maintained, Android-friendly)
-    implementation("com.github.mwiede:jsch:0.2.21")
+    implementation(libs.jsch)
 
     // Cron utilities (expression parsing & validation)
-    implementation("com.cronutils:cron-utils:9.2.1")
+    implementation(libs.cron.utils)
 
-    // Leak Canary
-    // debugImplementation(libs.leakcanary.android)
+    // Shizuku client — lets shizuku_exec run a shell command with the shell UID's
+    // privileges without root. :api is the client SDK; :provider ships ShizukuProvider,
+    // the ContentProvider that receives the binder from the Shizuku app.
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
 
     // tests
     testImplementation(libs.junit)

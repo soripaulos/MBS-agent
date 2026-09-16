@@ -84,6 +84,7 @@ val viewModelModule = module {
         WorkspaceDetailVM(
             id = it.get(),
             repository = get(),
+            terminalSessionManager = get(),
         )
     }
     viewModelOf(::FavoriteVM)
@@ -103,6 +104,7 @@ val viewModelModule = module {
             prefs = get(),
             httpClient = get(),
             settingsStore = get(),
+            hfApi = get(),
         )
     }
 }

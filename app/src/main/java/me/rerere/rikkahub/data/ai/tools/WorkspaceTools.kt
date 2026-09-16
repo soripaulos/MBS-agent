@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.ai.tools
 
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -14,10 +15,11 @@ import me.rerere.ai.ui.toMetadata
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.utils.generateUnifiedDiff
+import me.rerere.workspace.BackgroundStatus
 import me.rerere.workspace.WorkspaceCommandResult
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceManager
-import me.rerere.workspace.WorkspaceStorageArea
+import me.rerere.workspace.WorkspaceTreeResult
 import org.koin.java.KoinJavaComponent.getKoin
 import java.io.ByteArrayOutputStream
 
@@ -28,7 +30,12 @@ val WorkspaceToolDefaultApprovals: Map<String, Boolean> = mapOf(
     "workspace_read_file" to false,
     "workspace_write_file" to false,
     "workspace_edit_file" to false,
+    "workspace_create_folder" to false,
+    "workspace_read_folder" to false,
     "workspace_shell" to true,
+    "workspace_run_background" to true,
+    "workspace_background_status" to false,
+    "workspace_background_kill" to false,
 )
 
 fun resolveWorkspaceToolApproval(name: String, overrides: Map<String, Boolean>): Boolean =
@@ -49,11 +56,18 @@ suspend fun createWorkspaceTools(
         createReadFileTool(workspaceId, ::needsApproval, workspaceRepository),
         createWriteFileTool(workspaceId, ::needsApproval, workspaceRepository),
         createEditFileTool(workspaceId, ::needsApproval, workspaceRepository),
+        createCreateFolderTool(workspaceId, ::needsApproval, workspaceRepository),
+        createReadFolderTool(workspaceId, ::needsApproval, workspaceRepository),
         createShellTool(workspaceId, ::needsApproval, workspaceRepository, shellCwd),
+        createRunBackgroundTool(workspaceId, ::needsApproval, workspaceRepository, shellCwd),
+        createBackgroundStatusTool(workspaceId, ::needsApproval, workspaceRepository),
+        createBackgroundKillTool(workspaceId, ::needsApproval, workspaceRepository),
     )
 }
 
-private val IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg")
+private val IMAGE_EXTENSIONS = setOf(
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif", "avif", "ico",
+)
 
 private fun String.isImagePath(): Boolean =
     substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
@@ -67,7 +81,7 @@ private fun createReadFileTool(
     description = """
         Read a file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
-        Supports UTF-8 text files and image files (png, jpg, jpeg, gif, webp, bmp).
+        Supports UTF-8 text files and image files (png, jpg, jpeg, gif, webp, bmp, svg, heic, heif, avif, ico).
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
@@ -122,7 +136,7 @@ private fun createWriteFileTool(
             required = listOf("path", "text"),
         )
     },
-    needsApproval = { needsApproval("workspace_write_file") || it.pathOutsideWorkspace("path") },
+    needsApproval = { needsApproval("workspace_write_file") || it.pathOutsideWritableRoots("path") },
     execute = {
         val params = it.jsonObject
         val path = params.absolutePath("path")
@@ -165,7 +179,7 @@ private fun createEditFileTool(
             required = listOf("path", "old_text", "new_text"),
         )
     },
-    needsApproval = { needsApproval("workspace_edit_file") || it.pathOutsideWorkspace("path") },
+    needsApproval = { needsApproval("workspace_edit_file") || it.pathOutsideWritableRoots("path") },
     execute = {
         val params = it.jsonObject
         val path = params.absolutePath("path")
@@ -196,6 +210,60 @@ private fun createEditFileTool(
                 metadata = diff?.let { d -> DiffMetadata(diff = d).toMetadata() },
             )
         )
+    },
+)
+
+private fun createCreateFolderTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_create_folder",
+    description = """
+        Create a directory (and any missing parent directories) using the assistant's bound workspace Rootfs.
+        Paths must be absolute inside Rootfs. Use /workspace for the workspace files area.
+        Does nothing (succeeds) if the directory already exists.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = true)
+            },
+            required = listOf("path"),
+        )
+    },
+    needsApproval = { needsApproval("workspace_create_folder") || it.pathOutsideWritableRoots("path") },
+    execute = {
+        val path = it.jsonObject.absolutePath("path")
+        val entry = workspaceRepository.createFolderInRootfs(workspaceId, path)
+        listOf(UIMessagePart.Text(entry.toJson().toString()))
+    },
+)
+
+private fun createReadFolderTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_read_folder",
+    description = """
+        Recursively list a directory using the assistant's bound workspace Rootfs, as an indented tree.
+        Paths must be absolute inside Rootfs. Use /workspace for the workspace files area.
+        The listing is capped in entry count and depth; a truncation notice is included when a cap is hit.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = true)
+            },
+            required = listOf("path"),
+        )
+    },
+    needsApproval = { needsApproval("workspace_read_folder") },
+    execute = {
+        val path = it.jsonObject.absolutePath("path")
+        val result = workspaceRepository.readFolderTree(workspaceId, path)
+        listOf(UIMessagePart.Text(formatWorkspaceTree(path, result)))
     },
 )
 
@@ -268,40 +336,179 @@ private fun createShellTool(
     },
 )
 
+private fun createRunBackgroundTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+    defaultCwd: String? = null,
+) = Tool(
+    name = "workspace_run_background",
+    description = buildString {
+        append("Run a shell command persistently in the background in the assistant's bound workspace Rootfs. ")
+        append("The process survives across tool calls, so use it for dev servers, long-running installs, or watchers ")
+        append("(e.g. 'python -m http.server 8000'). The command runs in the foreground of its own process, so do NOT append '&'. ")
+        append("Returns a task id: poll it with workspace_background_status and stop it with workspace_background_kill. ")
+        append("Use cwd for a path relative to the workspace files root. ")
+        if (!defaultCwd.isNullOrBlank()) {
+            append("Defaults to '$defaultCwd'. ")
+        }
+        append("Requires Rootfs to be installed and ready.")
+    },
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("command", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Shell command to run persistently in the background")
+                })
+                put("cwd", buildJsonObject {
+                    put("type", "string")
+                    put(
+                        "description",
+                        if (!defaultCwd.isNullOrBlank()) {
+                            "Working directory relative to the workspace files root. Defaults to '$defaultCwd'."
+                        } else {
+                            "Working directory relative to the workspace files root. Defaults to root."
+                        }
+                    )
+                })
+            },
+            required = listOf("command"),
+        )
+    },
+    needsApproval = { needsApproval("workspace_run_background") },
+    execute = {
+        val params = it.jsonObject
+        val command = params.string("command") ?: error("command is required")
+        val cwd = (params.string("cwd") ?: defaultCwd.orEmpty())
+            .removePrefix("/workspace/").removePrefix("/workspace")
+        val status = workspaceRepository.startBackground(workspaceId, command, cwd)
+        listOf(
+            UIMessagePart.Text(
+                buildJsonObject {
+                    put("id", status.id)
+                    put("status", "running")
+                    put("command", status.command)
+                }.toString()
+            )
+        )
+    },
+)
+
+private fun createBackgroundStatusTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_background_status",
+    description = """
+        Check the status and captured output of background processes started with workspace_run_background.
+        Omit id to list every background process for this workspace.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Task id returned by workspace_run_background. Omit to list all.")
+                })
+            },
+            required = emptyList(),
+        )
+    },
+    needsApproval = { needsApproval("workspace_background_status") },
+    execute = {
+        val taskId = it.jsonObject.string("id")
+        val statuses = if (taskId != null) {
+            listOfNotNull(workspaceRepository.backgroundStatus(workspaceId, taskId))
+        } else {
+            workspaceRepository.listBackground(workspaceId)
+        }
+        listOf(
+            UIMessagePart.Text(
+                buildJsonObject {
+                    put("processes", buildJsonArray {
+                        statuses.forEach { status -> add(status.toJson()) }
+                    })
+                }.toString()
+            )
+        )
+    },
+)
+
+private fun createBackgroundKillTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_background_kill",
+    description = "Stop a background process started with workspace_run_background.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Task id returned by workspace_run_background")
+                })
+            },
+            required = listOf("id"),
+        )
+    },
+    needsApproval = { needsApproval("workspace_background_kill") },
+    execute = {
+        val taskId = it.jsonObject.string("id") ?: error("id is required")
+        val killed = workspaceRepository.killBackground(workspaceId, taskId)
+        listOf(
+            UIMessagePart.Text(
+                buildJsonObject {
+                    put("id", taskId)
+                    put("killed", killed)
+                }.toString()
+            )
+        )
+    },
+)
+
+private fun BackgroundStatus.toJson() = buildJsonObject {
+    put("id", id)
+    put("command", command)
+    put("status", if (running) "running" else "exited")
+    if (!running) put("exitCode", exitCode)
+    put("startedAt", startedAtMillis)
+    put("stdout", stdout)
+    put("stderr", stderr)
+    if (droppedStdout > 0) put("droppedStdout", droppedStdout)
+    if (droppedStderr > 0) put("droppedStderr", droppedStderr)
+}
+
 private fun kotlinx.serialization.json.JsonObject.string(name: String): String? =
     this[name]?.jsonPrimitive?.contentOrNull
 
 private suspend fun WorkspaceRepository.readTextInRootfs(
     workspaceId: String,
     path: String,
-): String {
-    val (area, relativePath) = rootfsPathToAreaAndRelative(path)
-    val size = fileSize(workspaceId, area, relativePath)
+): String = readRootfsBuffer(workspaceId, path).toString(Charsets.UTF_8.name())
+
+/**
+ * 按 Rootfs 内绝对路径读入内存。路径映射交给 WorkspaceManager, 由它统一处理
+ * /workspace、bind mount 与 Rootfs 内部路径。
+ */
+private suspend fun WorkspaceRepository.readRootfsBuffer(
+    workspaceId: String,
+    path: String,
+): ByteArrayOutputStream {
+    val size = rootfsFileSize(workspaceId, path)
     require(size <= MAX_READ_FILE_BYTES) {
         "File is too large to read: $path (${size / 1024 / 1024}MB, max ${MAX_READ_FILE_BYTES / 1024 / 1024}MB). Use shell commands like head, tail, or grep to read parts of it."
     }
-    val buffer = ByteArrayOutputStream(size.toInt())
-    exportFile(workspaceId, area, relativePath, buffer)
-    return buffer.toString(Charsets.UTF_8.name())
-}
-
-private fun rootfsPathToAreaAndRelative(path: String): Pair<WorkspaceStorageArea, String> {
-    val trimmed = path.trimEnd('/')
-    return if (trimmed == "/workspace" || trimmed.startsWith("/workspace/")) {
-        WorkspaceStorageArea.FILES to trimmed.removePrefix("/workspace").trimStart('/')
-    } else {
-        WorkspaceStorageArea.LINUX to trimmed.trimStart('/')
-    }
+    return ByteArrayOutputStream(size.toInt()).also { exportRootfsFile(workspaceId, path, it) }
 }
 
 private suspend fun WorkspaceRepository.readImageInRootfs(
     workspaceId: String,
     path: String,
 ): List<UIMessagePart> {
-    val (area, relativePath) = rootfsPathToAreaAndRelative(path)
-    val buffer = ByteArrayOutputStream()
-    exportFile(workspaceId, area, relativePath, buffer)
-    val bytes = buffer.toByteArray()
+    val bytes = readRootfsBuffer(workspaceId, path).toByteArray()
 
     val filesManager = getKoin().get<FilesManager>()
     val uris = filesManager.createChatFilesByByteArrays(listOf(bytes))
@@ -341,6 +548,26 @@ private suspend fun WorkspaceRepository.writeTextInRootfs(
             ${statEntryCommand(path)}
         """.trimIndent(),
         stdin = text.toByteArray(Charsets.UTF_8),
+    )
+    return result.stdout.parseRootfsEntry()
+}
+
+private suspend fun WorkspaceRepository.createFolderInRootfs(
+    workspaceId: String,
+    path: String,
+): WorkspaceFileEntry {
+    val pathArg = path.shellQuote()
+    val result = runRootfsCommand(
+        workspaceId = workspaceId,
+        action = "Create folder",
+        command = """
+            if [ -e $pathArg ] && [ ! -d $pathArg ]; then
+              printf '%s\n' ${"Path already exists and is not a directory: $path".shellQuote()} >&2
+              exit 1
+            fi
+            mkdir -p -- $pathArg || exit 1
+            ${statEntryCommand(path)}
+        """.trimIndent(),
     )
     return result.stdout.parseRootfsEntry()
 }
@@ -409,14 +636,21 @@ private fun kotlinx.serialization.json.JsonObject.absolutePath(name: String): St
     return path
 }
 
-private fun kotlinx.serialization.json.JsonElement.pathOutsideWorkspace(name: String): Boolean =
+// 免强制审批的可写安全区: 工作区文件目录、临时目录和技能目录
+private val WRITABLE_ROOT_PREFIXES = listOf("/workspace", "/tmp", "/skills")
+
+private fun kotlinx.serialization.json.JsonElement.pathOutsideWritableRoots(name: String): Boolean =
     runCatching {
-        jsonObject.absolutePath(name).isOutsideWorkspace()
+        jsonObject.absolutePath(name).isOutsideWritableRoots()
     }.getOrDefault(true)
 
-private fun String.isOutsideWorkspace(): Boolean {
+internal fun String.isOutsideWritableRoots(): Boolean {
     val normalized = trimEnd('/').ifBlank { "/" }
-    return normalized != "/workspace" && !normalized.startsWith("/workspace/")
+    // 拒绝任何包含 ".." 段的路径, 防止 /workspace/../etc/x 这类字面前缀匹配绕过审批
+    if (normalized.split('/').any { it == ".." }) return true
+    return WRITABLE_ROOT_PREFIXES.none { prefix ->
+        normalized == prefix || normalized.startsWith("$prefix/")
+    }
 }
 
 private fun String.rootfsName(): String =
@@ -439,6 +673,31 @@ private fun JsonObjectBuilder.putPathProperty(required: Boolean) {
             }
         )
     })
+}
+
+/**
+ * 纯函数: 把递归目录树格式化为紧凑的缩进文本 (面向模型), 命中截断上限时显式提示。
+ */
+internal fun formatWorkspaceTree(rootPath: String, result: WorkspaceTreeResult): String = buildString {
+    append(rootPath.trimEnd('/').ifEmpty { "/" }).append('/')
+    if (result.entries.isEmpty()) {
+        append(if (result.truncated) " (empty, truncated)" else " (empty)")
+        return@buildString
+    }
+    result.entries.forEach { entry ->
+        append('\n')
+        append("  ".repeat(entry.depth))
+        append(entry.name)
+        if (entry.isDirectory) {
+            append('/')
+        } else {
+            append(" (").append(entry.sizeBytes).append(" bytes)")
+        }
+    }
+    if (result.truncated) {
+        append('\n')
+        append("... (truncated: showing ${result.entries.size} entries; narrow the path for a complete listing)")
+    }
 }
 
 private fun WorkspaceFileEntry.toJson() = buildJsonObject {

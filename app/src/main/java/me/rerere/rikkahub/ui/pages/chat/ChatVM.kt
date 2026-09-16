@@ -11,11 +11,15 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -26,6 +30,7 @@ import me.rerere.ai.ui.isEmptyInputMessage
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
@@ -63,6 +68,10 @@ class ChatVM(
     // 聊天输入状态 - 保存在 ViewModel 中避免 TransactionTooLargeException
     val inputState = ChatInputState()
 
+    val voiceSession = VoiceSessionController(viewModelScope, context::getString) {
+        chatService.enqueueVoiceMessage(_conversationId, it)
+    }
+
     // 异步任务 (从ChatService获取，响应式)
     val conversationJob: StateFlow<Job?> =
         chatService
@@ -77,13 +86,6 @@ class ChatVM(
         .getConversationJobs()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
-    // Phase 17 — message queue: messages typed while a generation is running are held
-    // here (FIFO) and auto-sent one at a time as each turn completes, instead of being
-    // dropped or cancelling the in-flight turn (Hermes queue parity).
-    private val _queuedMessages = MutableStateFlow<List<List<UIMessagePart>>>(emptyList())
-    val queuedMessageCount: StateFlow<Int> =
-        _queuedMessages.map { it.size }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
-
     init {
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
@@ -93,33 +95,12 @@ class ChatVM(
             chatService.initializeConversation(_conversationId)
         }
 
-        // Phase 17 — drain the message queue: when the running job transitions to
-        // null/inactive and something is queued, pop the head and send it. sendMessage
-        // spins up a new job, which flips conversationJob back to active until that turn
-        // finishes — so this collector naturally sends one queued message per completed
-        // turn without extra bookkeeping.
-        viewModelScope.launch {
-            conversationJob.collect { job ->
-                if (job == null || !job.isActive) {
-                    val queued = _queuedMessages.value
-                    if (queued.isNotEmpty()) {
-                        _queuedMessages.value = queued.drop(1)
-                        chatService.sendMessage(_conversationId, queued.first())
-                    }
-                }
-            }
-        }
-
         // 记住对话ID, 方便下次启动恢复
         context.writeStringPreference("lastConversationId", _conversationId.toString())
     }
 
-    /** Phase 17 — drop all queued (not-yet-sent) messages. */
-    fun clearQueuedMessages() {
-        _queuedMessages.value = emptyList()
-    }
-
     override fun onCleared() {
+        voiceSession.stop()
         super.onCleared()
         // 移除对话引用
         chatService.removeConversationReference(_conversationId)
@@ -129,9 +110,9 @@ class ChatVM(
     val settings: StateFlow<Settings> =
         settingsStore.settingsFlow.stateIn(viewModelScope, SharingStarted.Eagerly, Settings.dummy())
 
-    // 网络搜索
+    // 网络搜索(每个助手独立)
     val enableWebSearch = settings.map {
-        it.enableWebSearch
+        it.getCurrentAssistant().enableWebSearch
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // 当前模型
@@ -146,6 +127,17 @@ class ChatVM(
 
     fun clearAllErrors() = chatService.clearAllErrors()
 
+    val messageQueue = chatService.getMessageQueueFlow(_conversationId)
+
+    fun removeQueuedMessage(id: Uuid) = chatService.removeQueuedMessage(_conversationId, id)
+
+    fun beginEditQueuedMessage(id: Uuid) = chatService.beginEditQueuedMessage(_conversationId, id)
+
+    fun finishEditQueuedMessage(id: Uuid, parts: List<UIMessagePart>?) =
+        chatService.finishEditQueuedMessage(_conversationId, id, parts)
+
+    fun resumeMessageQueue() = chatService.resumeMessageQueue(_conversationId)
+
     // 生成完成
     val generationDoneFlow: SharedFlow<Uuid> = chatService.generationDoneFlow
 
@@ -153,8 +145,8 @@ class ChatVM(
     val mcpManager = chatService.mcpManager
 
     // 更新设置
-    fun updateSettings(newSettings: Settings) {
-        viewModelScope.launch {
+    fun updateSettings(newSettings: Settings): Job {
+        return viewModelScope.launch {
             val oldSettings = settings.value
             // 检查用户头像是否有变化，如果有则删除旧头像
             checkUserAvatarDelete(oldSettings, newSettings)
@@ -191,8 +183,20 @@ class ChatVM(
     }
 
     // Update checker
-    val updateState =
-        updateChecker.checkUpdate().stateIn(viewModelScope, SharingStarted.Eagerly, UiState.Loading)
+    val updateState = settingsStore.settingsFlow
+        .map { settings ->
+            !settings.init &&
+                settings.displaySetting.updateCheckDisabledUntilEpochMillis <= System.currentTimeMillis()
+        }
+        .distinctUntilChanged()
+        .flatMapLatest { enabled ->
+            if (enabled) updateChecker.updateState else flowOf(UiState.Loading)
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+            UiState.Loading,
+        )
 
     /**
      * 处理消息发送
@@ -203,14 +207,10 @@ class ChatVM(
     fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
         if (content.isEmptyInputMessage()) return
 
-        // Phase 17 — if a generation is in flight, queue instead of cancelling it
-        // (ChatService.sendMessage cancels the previous job by design). Queued messages
-        // are drained one per completed turn by the collector in init.
-        if (answer && conversationJob.value?.isActive == true) {
-            _queuedMessages.value = _queuedMessages.value + listOf(content)
-            return
-        }
-
+        // Queueing while a generation is in flight is handled by ChatService's own message
+        // queue (see getMessageQueueFlow / removeQueuedMessage), which supersedes the
+        // fork's earlier view-model-level queue: it survives process death, can be paused,
+        // reordered and edited from the input bar, and is shared with voice mode.
         chatService.sendMessage(_conversationId, content, answer)
     }
 
@@ -222,18 +222,14 @@ class ChatVM(
         }
     }
 
-    fun handleCompressContext(additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int): Job {
-        return viewModelScope.launch {
-            chatService.compressConversation(
-                _conversationId,
-                conversation.value,
-                additionalPrompt,
-                targetTokens,
-                keepRecentMessages
-            ).onFailure {
-                chatService.addError(it, title = context.getString(R.string.error_title_compress_conversation))
-            }
-        }
+    fun handleCompressContext(additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int): Deferred<Result<Unit>> {
+        return chatService.compressConversationAsync(
+            conversationId = _conversationId,
+            conversation = conversation.value,
+            additionalPrompt = additionalPrompt,
+            targetTokens = targetTokens,
+            keepRecentMessages = keepRecentMessages,
+        )
     }
 
     suspend fun forkMessage(message: UIMessage): Conversation {
@@ -286,6 +282,9 @@ class ChatVM(
         chatService.handleToolApproval(_conversationId, toolCallId, approved = true, answer = answer)
     }
 
+    suspend fun rerunTool(toolCallId: String): me.rerere.rikkahub.service.ChatService.RerunToolResult =
+        chatService.rerunTool(_conversationId, toolCallId)
+
     fun stopGeneration() {
         viewModelScope.launch {
             chatService.stopGeneration(_conversationId)
@@ -298,18 +297,10 @@ class ChatVM(
         }
     }
 
-    fun updateTitle(title: String) {
-        viewModelScope.launch {
-            val updatedConversation = conversation.value.copy(title = title)
-            chatService.saveConversation(_conversationId, updatedConversation)
-        }
-    }
-
-    fun deleteConversation(conversation: Conversation) {
+    fun deleteConversation(conversation: Conversation): Job =
         viewModelScope.launch {
             conversationRepo.deleteConversation(conversation)
         }
-    }
 
     fun updatePinnedStatus(conversation: Conversation) {
         viewModelScope.launch {
@@ -320,7 +311,12 @@ class ChatVM(
     fun moveConversationToAssistant(conversation: Conversation, targetAssistantId: Uuid) {
         viewModelScope.launch {
             val conversationFull = conversationRepo.getConversationById(conversation.id) ?: return@launch
-            val updatedConversation = conversationFull.copy(assistantId = targetAssistantId)
+            // Folders are per-assistant groupings; after switching assistant the old folder is
+            // not visible under the new one, so clear the assignment to avoid losing the chat.
+            val updatedConversation = conversationFull.copy(
+                assistantId = targetAssistantId,
+                folderId = null,
+            )
             // Drop any "Allow for this chat" grants the user gave the previous assistant.
             // The grants apply to a tool surface the new assistant may use very differently
             // (different prompt, different tool list), and the user authorised them under

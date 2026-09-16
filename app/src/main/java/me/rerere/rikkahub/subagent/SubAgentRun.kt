@@ -22,6 +22,7 @@ data class SubAgentRun(
     val modelId: String?,              // null = inherited from parent
     val tools: List<String>?,          // null = inherited from parent
     val runInBackground: Boolean,
+    val noResult: Boolean = false,   // #78/#79: suppress result text from encodeRun/parent notification
     val timeoutSeconds: Int,
     val maxTrips: Int,
     val status: SubAgentStatus,
@@ -50,7 +51,7 @@ object SubAgentDefaults {
     const val DEFAULT_MAX_TRIPS = 12
     const val MAX_MAX_TRIPS = 30
     const val MAX_LABEL_LENGTH = 60
-    const val GLOBAL_CONCURRENCY_CAP = 16
+    const val GLOBAL_CONCURRENCY_CAP = 30
     const val MIN_PER_ASSISTANT_CAP = 1
     const val MAX_PER_ASSISTANT_CAP = 8
     const val REGISTRY_LRU_CAP = 50
@@ -75,9 +76,16 @@ object SubAgentDefaults {
 data class SubAgentRequest(
     val task: String,
     val modelId: String? = null,
+    /**
+     * #36: name of a configured [SubAgentProfile], resolved case-insensitively by
+     * [SubAgentProfileResolver]. `modelId` above wins over the profile's model when both are
+     * given; see [SubAgentEngine.executeRun].
+     */
+    val agentName: String? = null,
     val systemPrompt: String? = null,
     val tools: List<String>? = null,
     val runInBackground: Boolean = false,
+    val noResult: Boolean = false,
     val timeoutSeconds: Int = SubAgentDefaults.DEFAULT_TIMEOUT_SECONDS,
     val maxTrips: Int = SubAgentDefaults.DEFAULT_MAX_TRIPS,
     val label: String? = null,
@@ -130,3 +138,20 @@ object SubAgentRequestValidator {
         return Result.Ok(request.copy(task = task))
     }
 }
+
+/**
+ * #36: a named, reusable sub-agent configuration - a name, description, custom system
+ * prompt and model, defined once in settings so the dispatching model can pick a specialist by
+ * NAME instead of memorizing a model uuid. Resolved by [SubAgentProfileResolver]. `modelId` null
+ * means the profile itself defers to the parent's model, mirroring the "null = inherit"
+ * convention already used by [SubAgentRequest.modelId].
+ */
+@Serializable
+data class SubAgentProfile(
+    val id: Uuid = Uuid.random(),
+    val name: String = "",
+    val description: String = "",
+    val systemPrompt: String = "",
+    val modelId: Uuid? = null,
+    val enabled: Boolean = true,
+)

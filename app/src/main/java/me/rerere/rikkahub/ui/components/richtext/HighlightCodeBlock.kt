@@ -10,7 +10,6 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +35,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
@@ -52,15 +54,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import me.rerere.highlight.HighlightText
 import me.rerere.highlight.HighlightTextColorPalette
-import me.rerere.highlight.Highlighter
-import me.rerere.highlight.LocalHighlighter
 import me.rerere.highlight.buildHighlightText
+import me.rerere.highlight.CodeHighlightText
+import me.rerere.highlight.CodeHighlighter
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.ArrowUp01
@@ -72,6 +73,7 @@ import me.rerere.hugeicons.stroke.View
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.ui.components.webview.WebView
+import me.rerere.rikkahub.ui.components.webview.WebViewContentCache
 import me.rerere.rikkahub.ui.components.webview.rememberWebViewState
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalSettings
@@ -81,7 +83,6 @@ import me.rerere.rikkahub.ui.theme.AtomOneDarkPalette
 import me.rerere.rikkahub.ui.theme.AtomOneLightPalette
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
-import me.rerere.rikkahub.utils.base64Encode
 import me.rerere.rikkahub.utils.toDp
 import kotlin.time.Clock
 
@@ -111,7 +112,7 @@ fun HighlightCodeBlock(
     val normalizedLanguage = remember(language) { language.lowercase() }
     val canInlinePreview = completeCodeBlock && normalizedLanguage in PREVIEWABLE_LANGUAGES
     var previewMode by remember(canInlinePreview, code, normalizedLanguage) {
-        mutableStateOf(canInlinePreview)
+        mutableStateOf(false)
     }
 
     var isExpanded by remember(settings.displaySetting.codeBlockAutoCollapse) {
@@ -124,10 +125,10 @@ fun HighlightCodeBlock(
         contract = ActivityResultContracts.CreateDocument("*/*")
     ) { uri: Uri? ->
         uri?.let {
-            scope.launch {
+            scope.launch(Dispatchers.IO) {
                 try {
-                    context.contentResolver.openOutputStream(it)?.use { outputStream ->
-                        outputStream.write(code.toByteArray())
+                    context.contentResolver.openOutputStream(it, "wt")?.use { outputStream ->
+                        outputStream.write(code.toByteArray(Charsets.UTF_8))
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "HighlightCodeBlock: failed to save code to document", e)
@@ -218,6 +219,7 @@ fun HighlightCodeBlock(
                     if (settings.displaySetting.codeBlockAutoCollapse && codeLines.size > COLLAPSE_LINES) {
                         Box(
                             modifier = Modifier
+                                .semantics { role = Role.Button }
                                 .onClick {
                                     isExpanded = !isExpanded
                                 }
@@ -279,7 +281,7 @@ private fun CodeBlockWithLineNumbersWrapped(
                         softWrap = false,
                         modifier = Modifier.padding(end = 8.dp)
                     )
-                    HighlightText(
+                    CodeHighlightText(
                         code = line,
                         language = language,
                         fontSize = textStyle.fontSize,
@@ -339,7 +341,7 @@ private fun CodeBlockDefault(
 
         // 代码列
         SelectionContainer {
-            HighlightText(
+            CodeHighlightText(
                 code = displayCode,
                 language = language,
                 modifier = Modifier.animateContentSize(),
@@ -367,6 +369,7 @@ private fun HighlightCodeActions(
     canInlinePreview: Boolean = false,
     onTogglePreviewMode: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -442,7 +445,7 @@ private fun HighlightCodeActions(
             if (canInlinePreview) {
                 Icon(
                     imageVector = if (previewMode) HugeIcons.Code else HugeIcons.View,
-                    contentDescription = if (previewMode) "Code" else stringResource(id = R.string.code_block_preview),
+                    contentDescription = if (previewMode) stringResource(id = R.string.accessibility_code_view) else stringResource(id = R.string.code_block_preview),
                     tint = iconTint,
                     modifier = Modifier
                         .clip(RoundedCornerShape(4.dp))
@@ -463,7 +466,8 @@ private fun HighlightCodeActions(
                         .clip(RoundedCornerShape(4.dp))
                         .onClick {
                             val content = buildCodePreviewHtml(code = code, language = normalizedLanguage)
-                            navController.navigate(Screen.WebView(content = content.base64Encode()))
+                            val contentId = WebViewContentCache.store(context.cacheDir, content)
+                            navController.navigate(Screen.WebView(contentId = contentId))
                         }
                         .padding(4.dp)
                         .size(iconSize)
@@ -507,7 +511,7 @@ private fun buildCodePreviewHtml(code: String, language: String): String {
 
 class HighlightCodeVisualTransformation(
     val language: String,
-    val highlighter: Highlighter,
+    val highlighter: CodeHighlighter,
     val darkMode: Boolean
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
@@ -516,12 +520,10 @@ class HighlightCodeVisualTransformation(
             if (text.text.isEmpty()) {
                 AnnotatedString("")
             } else {
-                runBlocking {
-                    val tokens = highlighter.highlight(text.text, language)
-                    buildAnnotatedString {
-                        tokens.forEach { token ->
-                            buildHighlightText(token, colorPalette)
-                        }
+                val tokens = highlighter.highlight(text.text, language)
+                buildAnnotatedString {
+                    tokens.forEach { token ->
+                        buildHighlightText(token, colorPalette)
                     }
                 }
             }
@@ -533,15 +535,6 @@ class HighlightCodeVisualTransformation(
         return TransformedText(
             text = annotatedString,
             offsetMapping = OffsetMapping.Identity
-        )
-    }
-
-    companion object {
-        @Composable
-        fun regex() = HighlightCodeVisualTransformation(
-            language = "regex",
-            highlighter = LocalHighlighter.current,
-            darkMode = LocalDarkMode.current,
         )
     }
 }

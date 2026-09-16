@@ -7,6 +7,14 @@ import java.util.concurrent.TimeUnit
 
 interface WorkspaceShellRunner {
     fun execute(context: WorkspaceShellContext): WorkspaceCommandResult
+
+    /**
+     * Launch [context.command] as a live process for background use. The returned
+     * Process is NOT waited on and NOT timed out; the caller owns draining and
+     * lifecycle. [context.timeoutMillis] and [context.stdin] are ignored.
+     * Throws IllegalStateException on setup failure (rootfs / proot / loader missing).
+     */
+    fun start(context: WorkspaceShellContext): Process
 }
 
 data class WorkspaceShellContext(
@@ -19,16 +27,23 @@ data class WorkspaceShellContext(
     val workingDir: File,
     val timeoutMillis: Long,
     val stdin: ByteArray? = null,
+    val bindMounts: List<WorkspaceBindMount> = emptyList(),
+    val shellCompatibilityMode: Boolean = false,
 )
 
 class HostShellRunner : WorkspaceShellRunner {
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
-        val process = ProcessBuilder(defaultShell(), "-c", context.command)
-            .directory(context.workingDir)
-            .redirectErrorStream(false)
-            .start()
+        val process = newProcessBuilder(context).start()
         return process.readResult(context.timeoutMillis, context.stdin)
     }
+
+    override fun start(context: WorkspaceShellContext): Process =
+        newProcessBuilder(context).start()
+
+    private fun newProcessBuilder(context: WorkspaceShellContext): ProcessBuilder =
+        ProcessBuilder(defaultShell(), "-c", context.command)
+            .directory(context.workingDir)
+            .redirectErrorStream(false)
 
     private fun defaultShell(): String =
         if (File("/system/bin/sh").exists()) "/system/bin/sh" else "/bin/sh"
@@ -41,6 +56,15 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
     val stdout = StreamCollector(inputStream)
     val stderr = StreamCollector(errorStream)
     val stdinWriter = stdin?.let { bytes -> StreamWriter(outputStream, bytes) }
+    if (stdinWriter == null) {
+        // 没有 stdin 输入时立即关闭管道, 让子进程读到 EOF;
+        // 否则 cat/gh/kubectl 等按 isatty 判断的工具会把这根永不写入的管道当成待输入流而永久阻塞
+        try {
+            outputStream.close()
+        } catch (_: IOException) {
+            // 子进程已提前退出导致管道关闭, 忽略
+        }
+    }
     try {
         val finished = waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
         if (!finished) {

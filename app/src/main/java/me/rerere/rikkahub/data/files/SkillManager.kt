@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.data.datastore.SettingsStore
 
@@ -154,6 +155,11 @@ class SkillManager(
 
     suspend fun deleteSkill(name: String): Boolean = withContext(Dispatchers.IO) {
         val skillDir = resolveSkillDir(name) ?: return@withContext false
+        // Bundled-ness must be checked before deleteRecursively() destroys the directory:
+        // for a non-core bundled skill, ownership is tracked by a `.seeded` sentinel that
+        // lives inside this same directory, but bundledSkillNames() reads the asset list,
+        // which is unaffected by the delete.
+        val isBundled = name in bundledSkillNames()
         val deleted = skillDir.deleteRecursively()
         if (deleted) {
             settingsStore.update { settings ->
@@ -164,14 +170,77 @@ class SkillManager(
                         } else {
                             assistant
                         }
-                    }
+                    },
+                    // #84: record the deletion outside the (now-gone) skill directory so
+                    // seedDefaultSkillsIfNeeded can tell "never seeded" apart from
+                    // "seeded, then deleted" and does not silently re-create it.
+                    deletedBundledSkills = deletedBundledSkillsAfterDelete(
+                        current = settings.deletedBundledSkills,
+                        deletedName = name,
+                        isBundled = isBundled,
+                    ),
                 )
             }
         }
         deleted
     }
 
+    /**
+     * Clear [name]'s deletion record (if any) and reseed, so a deliberate reinstall from
+     * the skill catalog restores a bundled skill the user previously deleted (#84). A no-op
+     * data-wise for a skill that was never deleted; the reseed pass below is still safe to
+     * run since [decideSeedAction] skips it when the bundled hash already matches.
+     */
+    suspend fun reinstallBundledSkill(name: String) {
+        settingsStore.update { settings ->
+            settings.copy(deletedBundledSkills = settings.deletedBundledSkills - name)
+        }
+        seedDefaultSkillsIfNeeded()
+    }
+
+    /**
+     * 清理所有助手 enabledSkills 中已不存在于磁盘的技能名。
+     *
+     * 当用户在 App 外直接删除 /skills/ 目录下的技能时，不会走 [deleteSkill] 的清理逻辑，
+     * 导致 enabledSkills 残留"幽灵"技能名，使扩展入口角标计数偏大。
+     */
+    suspend fun pruneOrphanedEnabledSkills(): List<SkillMetadata> = withContext(Dispatchers.IO) {
+        val skills = listSkills()
+        val existing = skills.mapTo(HashSet()) { it.name }
+        settingsStore.update { settings ->
+            var changed = false
+            val newAssistants = settings.assistants.map { assistant ->
+                val pruned = assistant.enabledSkills.filterTo(LinkedHashSet()) { it in existing }
+                if (pruned.size != assistant.enabledSkills.size) {
+                    changed = true
+                    assistant.copy(enabledSkills = pruned)
+                } else {
+                    assistant
+                }
+            }
+            if (changed) settings.copy(assistants = newAssistants) else settings
+        }
+        skills
+    }
+
     fun getSkillDir(skillName: String): File? = resolveSkillDir(skillName)
+
+    /**
+     * Doctor support, read-only: the skill names currently bundled in
+     * `assets/default-skills/`, so the Doctor can tell a "bundled" skill directory
+     * (seeded from assets) apart from a user-added one without duplicating the seeding
+     * logic in [seedDefaultSkillsIfNeeded].
+     */
+    fun bundledSkillNames(): Set<String> = runCatching {
+        context.assets.list("default-skills").orEmpty().toSet()
+    }.getOrDefault(emptySet())
+
+    /**
+     * Doctor support, read-only: hash [skillName]'s currently-bundled assets the same
+     * way [seedDefaultSkillsIfNeeded] does, so the Doctor can compare it against the
+     * on-disk `.core-bundled-hash` sentinel without re-deriving the hashing algorithm.
+     */
+    fun bundledSkillAssetHash(skillName: String): String = computeBundledSkillHash("default-skills", skillName)
 
     fun saveSkillFile(skillName: String, relativePath: String, content: String): Boolean {
         val skillDir = resolveSkillDir(skillName) ?: return false
@@ -246,7 +315,7 @@ class SkillManager(
      * launches skip the copy without checking individual file mtimes — and so the user can
      * delete a default skill and we will not silently re-install it.
      */
-    fun seedDefaultSkillsIfNeeded() {
+    suspend fun seedDefaultSkillsIfNeeded() {
         val assetRoot = "default-skills"
         val assetMgr = context.assets
         val skillNames = try {
@@ -255,8 +324,14 @@ class SkillManager(
             Log.w(TAG, "seedDefaultSkillsIfNeeded: cannot list assets", e)
             return
         }
+        // #84: names the user explicitly deleted. Read once per pass; deleteSkill() /
+        // reinstallBundledSkill() are the only writers, both persisted before this can run.
+        // settingsFlow starts as Settings.dummy() (init = true, empty set) until DataStore
+        // loads, and this runs at process start, so wait for the real value.
+        val deletedBundledSkills = settingsStore.settingsFlow.first { !it.init }.deletedBundledSkills
         for (skillName in skillNames) {
             val targetDir = SkillPaths.resolveSkillDir(getSkillsDir(), skillName) ?: continue
+            val deletedByUser = skillName in deletedBundledSkills
 
             // Read the bundled SKILL.md once to decide what to do.
             val bundledSkillMd = runCatching {
@@ -273,10 +348,19 @@ class SkillManager(
                 // Core skills (auto_load=true) re-seed whenever the bundled content changes
                 // — typically across an APK upgrade. This keeps SOUL/HEARTBEAT/TOOLS in
                 // sync with the app version while still allowing the user to edit between
-                // upgrades (their edits stick until we ship a new bundled version).
+                // upgrades (their edits stick until we ship a new bundled version). Core
+                // skills are always ours to manage, so the sentinel does not gate this.
                 val bundledHash = computeBundledSkillHash(assetRoot, skillName)
                 val currentHash = if (coreVersionFile.exists()) coreVersionFile.readText().trim() else ""
-                if (bundledHash == currentHash) continue
+                val decision = decideSeedAction(
+                    ownedByUs = true,
+                    targetDirExists = targetDir.exists(),
+                    targetDirNonEmpty = false, // unused when ownedByUs is true
+                    bundledHash = bundledHash,
+                    storedHash = currentHash,
+                    deletedByUser = deletedByUser,
+                )
+                if (decision == SeedDecision.SKIP) continue
                 try {
                     if (targetDir.exists()) targetDir.deleteRecursively()
                     copyAssetSkill(assetRoot, skillName, targetDir)
@@ -289,17 +373,30 @@ class SkillManager(
                 continue
             }
 
-            // Non-core (lazy) skills: original behavior — seed once, then leave alone.
-            // The user may have manually installed and then deleted the skill. Detect that
-            // case by checking whether the directory exists at all — if it does and there is
-            // no sentinel, the user owns it; do not overwrite. If the directory does not
-            // exist, this is a fresh install and we can seed.
-            if (sentinel.exists()) continue
-            if (targetDir.exists() && targetDir.listFiles()?.isNotEmpty() == true) continue
+            // Non-core (lazy) skills: seeded once, then re-seeded only when the bundled
+            // content changes AND the directory is one we seeded ourselves (tracked by the
+            // .seeded sentinel, reusing the same .core-bundled-hash file the core path uses).
+            // A directory that exists with no sentinel is user-owned — the user may have
+            // manually installed and then deleted the skill, or created a same-named one —
+            // and is never overwritten, preserving the original "seed once, then leave
+            // alone" contract for anything we did not create ourselves.
+            val bundledHash = computeBundledSkillHash(assetRoot, skillName)
+            val storedHash = if (coreVersionFile.exists()) coreVersionFile.readText().trim() else ""
+            val decision = decideSeedAction(
+                ownedByUs = sentinel.exists(),
+                targetDirExists = targetDir.exists(),
+                targetDirNonEmpty = targetDir.exists() && targetDir.listFiles()?.isNotEmpty() == true,
+                bundledHash = bundledHash,
+                storedHash = storedHash,
+                deletedByUser = deletedByUser,
+            )
+            if (decision == SeedDecision.SKIP) continue
             try {
+                if (targetDir.exists()) targetDir.deleteRecursively()
                 copyAssetSkill(assetRoot, skillName, targetDir)
                 sentinel.writeText(System.currentTimeMillis().toString())
-                Log.i(TAG, "seedDefaultSkillsIfNeeded: seeded $skillName")
+                coreVersionFile.writeText(bundledHash)
+                Log.i(TAG, "seedDefaultSkillsIfNeeded: seeded $skillName (hash=$bundledHash)")
             } catch (e: Exception) {
                 Log.w(TAG, "seedDefaultSkillsIfNeeded: failed to seed $skillName", e)
             }
@@ -419,6 +516,54 @@ class SkillManager(
     }
 }
 
+internal enum class SeedDecision { SKIP, SEED }
+
+/**
+ * #84: the deletedBundledSkills set after [SkillManager.deleteSkill] deletes [deletedName].
+ * Only a bundled skill's name is ever recorded — deleting a user-created or otherwise
+ * non-bundled skill leaves [current] untouched, since [decideSeedAction] only consults this
+ * set for names that actually appear in `assets/default-skills/`. Extracted out of
+ * [SkillManager] so it is testable without a [android.content.Context]. Pure.
+ */
+internal fun deletedBundledSkillsAfterDelete(
+    current: Set<String>,
+    deletedName: String,
+    isBundled: Boolean,
+): Set<String> = if (isBundled) current + deletedName else current
+
+/**
+ * Pure decision for whether a bundled skill directory should be (re)written from assets.
+ * Shared by both the core (`auto_load: true`) and non-core seeding branches of
+ * [SkillManager.seedDefaultSkillsIfNeeded] so they cannot drift apart, and extracted out of
+ * [SkillManager] itself so it is testable without a [android.content.Context] /
+ * `AssetManager`.
+ *
+ * @param ownedByUs whether this directory is ours to overwrite: always `true` for core
+ * skills (they are unconditionally ours to manage), or `sentinel.exists()` for non-core
+ * skills (a directory that exists with no `.seeded` sentinel was never created by us and is
+ * user-owned).
+ * @param targetDirNonEmpty ignored when [ownedByUs] is `true`.
+ * @param deletedByUser #84: `true` when this skill's name is in [me.rerere.rikkahub.data.datastore.Settings.deletedBundledSkills]
+ * (the user explicitly deleted it via [SkillManager.deleteSkill]). Checked first and skips
+ * unconditionally, in both the core and non-core branches, so a deliberate delete is never
+ * mistaken for "never seeded" and silently re-created.
+ */
+internal fun decideSeedAction(
+    ownedByUs: Boolean,
+    targetDirExists: Boolean,
+    targetDirNonEmpty: Boolean,
+    bundledHash: String,
+    storedHash: String,
+    deletedByUser: Boolean = false,
+): SeedDecision {
+    if (deletedByUser) return SeedDecision.SKIP
+    if (!ownedByUs) {
+        // Never touch a directory we did not create ourselves.
+        return if (targetDirExists && targetDirNonEmpty) SeedDecision.SKIP else SeedDecision.SEED
+    }
+    return if (bundledHash == storedHash) SeedDecision.SKIP else SeedDecision.SEED
+}
+
 /**
  * @property autoLoad If true, the skill's body (or [autoLoadPath] file if set) is injected
  * directly into the system prompt every turn instead of being lazy-loaded via the `use_skill`
@@ -462,44 +607,3 @@ data class SkillContent(
     val argsSchema: kotlinx.serialization.json.JsonObject? = null,
 )
 
-object SkillFrontmatterParser {
-    private val frontmatterEndRegex = Regex("""\r?\n---(?:\r?\n|$)""")
-
-    /**
-     * UTF-8 BOM character. Some editors (notably Windows Notepad, VS Code on Windows with
-     * certain settings) prepend this to UTF-8 files. Strip it before parsing so that
-     * `﻿---` is treated the same as `---`.
-     */
-    private const val BOM = '﻿'
-
-    fun parse(content: String): Map<String, String> {
-        val normalised = if (content.startsWith(BOM)) content.substring(1) else content
-        val result = mutableMapOf<String, String>()
-        if (!normalised.startsWith("---")) return result
-        val endRange = findFrontmatterEndRange(normalised) ?: return result
-        val yaml = normalised.substring(3, endRange.first).trim()
-        yaml.lines().forEach { line ->
-            val colonIdx = line.indexOf(':')
-            if (colonIdx > 0) {
-                val key = line.substring(0, colonIdx).trim()
-                val value = line.substring(colonIdx + 1).trim().removeSurrounding("\"")
-                if (key.isNotBlank() && value.isNotBlank()) {
-                    result[key] = value
-                }
-            }
-        }
-        return result
-    }
-
-    fun extractBody(content: String): String {
-        val normalised = if (content.startsWith(BOM)) content.substring(1) else content
-        if (!normalised.startsWith("---")) return normalised
-        val endRange = findFrontmatterEndRange(normalised) ?: return normalised
-        return normalised.substring(endRange.last + 1).trimStart('\r', '\n')
-    }
-
-    private fun findFrontmatterEndRange(content: String): IntRange? {
-        if (!content.startsWith("---")) return null
-        return frontmatterEndRegex.find(content, startIndex = 3)?.range
-    }
-}

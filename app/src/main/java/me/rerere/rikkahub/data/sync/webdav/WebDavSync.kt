@@ -5,38 +5,18 @@ import android.util.Log
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import me.rerere.rikkahub.data.db.AppDatabase
-import me.rerere.rikkahub.data.db.ImportedDatabaseReconciler
-import me.rerere.rikkahub.data.files.FileFolders
-import me.rerere.rikkahub.data.files.SkillPaths
-import me.rerere.rikkahub.data.datastore.Settings
-import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.sync.BackupManager
 import me.rerere.rikkahub.data.datastore.WebDavConfig
-import me.rerere.rikkahub.data.datastore.migration.SettingsJsonMigrator
 import me.rerere.rikkahub.utils.fileSizeToString
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.time.Instant
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
-import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
 
 private const val TAG = "WebDavSync"
 
-// Phase 20 — per-file cap for the full-backup extras (a stray multi-hundred-MB blob in
-// filesDir must not balloon the zip; DBs/skills/uploads are handled by their own paths).
-private const val FULL_BACKUP_MAX_FILE_BYTES = 128L * 1024 * 1024
-
 class WebDavSync(
-    private val settingsStore: SettingsStore,
-    private val json: Json,
+    private val backupManager: BackupManager,
     private val context: Context,
     private val httpClient: HttpClient,
-    private val appDatabase: AppDatabase,
 ) {
     private fun getClient(config: WebDavConfig): WebDavClient {
         return WebDavClient(config, httpClient)
@@ -92,7 +72,7 @@ class WebDavSync(
 
     suspend fun restore(config: WebDavConfig, item: WebDavBackupItem) = withContext(Dispatchers.IO) {
         val client = getClient(config)
-        val backupFile = File(context.cacheDir, item.displayName)
+        val backupFile = File.createTempFile("restore-", ".zip", context.cacheDir)
 
         try {
             // Download backup file directly to file to avoid OOM
@@ -118,435 +98,27 @@ class WebDavSync(
         Log.i(TAG, "deleteBackupFile: Deleted ${item.displayName}")
     }
 
-    suspend fun restoreFromLocalFile(file: File, config: WebDavConfig) = withContext(Dispatchers.IO) {
-        Log.i(TAG, "restoreFromLocalFile: Starting restore from ${file.absolutePath}")
-
-        if (!file.exists()) {
-            throw Exception("Backup file does not exist")
-        }
-
-        if (!file.canRead()) {
-            throw Exception("Cannot read backup file")
-        }
-
-        try {
-            restoreFromBackupFile(file, config)
-            Log.i(TAG, "restoreFromLocalFile: Restore completed successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "restoreFromLocalFile: Failed to restore from local file", e)
-            throw Exception("Restore failed: ${e.message}")
-        }
+    suspend fun restoreFromLocalFile(file: File, config: WebDavConfig) {
+        restoreFromBackupFile(file, config)
     }
 
     suspend fun prepareBackupFile(
         config: WebDavConfig,
-        // Phase 20 — full backup: additionally zips every DataStore preferences file
-        // (tool approvals, termux/browser/telegram/notification prefs — none of which live
-        // in settings.json), shared_prefs, and the rest of filesDir (minus rebuildable or
-        // huge trees like workspace rootfs). Used by the local Export/Import tab so a
-        // single zip round-trips the entire app state.
+        // Local Export passes true so one zip carries the whole app (see BackupManager);
+        // scheduled cloud sync leaves it off and backs up only the selected item groups.
         includeEverything: Boolean = false,
-    ): File = withContext(Dispatchers.IO) {
-        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-        val backupFile = File(context.cacheDir, "backup_$timestamp.zip")
+    ): File = backupManager.createBackup(
+        includeDatabase = WebDavConfig.BackupItem.DATABASE in config.items,
+        includeFiles = WebDavConfig.BackupItem.FILES in config.items,
+        includeEverything = includeEverything,
+    )
 
-        if (backupFile.exists()) {
-            backupFile.delete()
-        }
+    private suspend fun restoreFromBackupFile(backupFile: File, config: WebDavConfig) = backupManager.stageRestore(
+        archive = backupFile,
+        includeDatabase = WebDavConfig.BackupItem.DATABASE in config.items,
+        includeFiles = WebDavConfig.BackupItem.FILES in config.items,
+    )
 
-        // Create zip file and backup data
-        ZipOutputStream(FileOutputStream(backupFile)).use { zipOut ->
-            addVirtualFileToZip(
-                zipOut = zipOut,
-                name = "settings.json",
-                content = json.encodeToString(settingsStore.settingsFlow.value)
-            )
-
-            // Backup database files
-            if (config.items.contains(WebDavConfig.BackupItem.DATABASE)) {
-                // Flush the WAL into the main db first so the copied rikka_hub.db is a
-                // consistent snapshot instead of a torn read against a live WAL.
-                checkpointDatabase()
-
-                val dbFile = context.getDatabasePath("rikka_hub")
-                if (dbFile.exists()) {
-                    addFileToZip(zipOut, dbFile, "rikka_hub.db")
-                }
-
-                val walFile = File(dbFile.parentFile, "rikka_hub-wal")
-                if (walFile.exists()) {
-                    addFileToZip(zipOut, walFile, "rikka_hub-wal")
-                }
-
-                val shmFile = File(dbFile.parentFile, "rikka_hub-shm")
-                if (shmFile.exists()) {
-                    addFileToZip(zipOut, shmFile, "rikka_hub-shm")
-                }
-            }
-
-            // Backup app files
-            if (config.items.contains(WebDavConfig.BackupItem.FILES)) {
-                val uploadFolder = File(context.filesDir, FileFolders.UPLOAD)
-                if (uploadFolder.exists() && uploadFolder.isDirectory) {
-                    Log.i(TAG, "prepareBackupFile: Backing up files from ${uploadFolder.absolutePath}")
-                    uploadFolder.listFiles()?.forEach { file ->
-                        if (file.isFile) {
-                            addFileToZip(zipOut, file, "${FileFolders.UPLOAD}/${file.name}")
-                        }
-                    }
-                } else {
-                    Log.w(TAG, "prepareBackupFile: Upload folder does not exist or is not a directory")
-                }
-
-                val skillsFolder = File(context.filesDir, FileFolders.SKILLS)
-                if (skillsFolder.exists() && skillsFolder.isDirectory) {
-                    Log.i(TAG, "prepareBackupFile: Backing up skills from ${skillsFolder.absolutePath}")
-                    addDirectoryToZip(
-                        zipOut = zipOut,
-                        rootDir = skillsFolder,
-                        currentDir = skillsFolder,
-                        entryPrefix = "${FileFolders.SKILLS}/"
-                    )
-                } else {
-                    Log.w(TAG, "prepareBackupFile: Skills folder does not exist or is not a directory")
-                }
-
-                val fontsFolder = File(context.filesDir, FileFolders.FONTS)
-                if (fontsFolder.exists() && fontsFolder.isDirectory) {
-                    Log.i(TAG, "prepareBackupFile: Backing up fonts from ${fontsFolder.absolutePath}")
-                    fontsFolder.listFiles()?.forEach { file ->
-                        if (file.isFile) {
-                            addFileToZip(zipOut, file, "${FileFolders.FONTS}/${file.name}")
-                        }
-                    }
-                } else {
-                    Log.w(TAG, "prepareBackupFile: Fonts folder does not exist or is not a directory")
-                }
-            }
-
-            if (includeEverything) {
-                val dataDir = context.filesDir.parentFile
-                // DataStore .preferences_pb files: everything configured outside Settings
-                // (tool approvals, termux/browser/notification/telegram prefs, ...).
-                val datastoreDir = File(dataDir, "datastore")
-                if (datastoreDir.isDirectory) {
-                    addDirectoryToZipFiltered(zipOut, datastoreDir, "appdata/datastore/")
-                }
-                val sharedPrefsDir = File(dataDir, "shared_prefs")
-                if (sharedPrefsDir.isDirectory) {
-                    addDirectoryToZipFiltered(zipOut, sharedPrefsDir, "appdata/shared_prefs/")
-                }
-                // The rest of filesDir not covered above. Deny rebuildable / multi-GB trees
-                // (workspace rootfs, local model weights) and cap individual files so one
-                // stray blob can't balloon the zip.
-                val covered = setOf(FileFolders.UPLOAD, FileFolders.SKILLS, FileFolders.FONTS)
-                val denied = setOf("rootfs", "workspace", "workspaces", "models", "local-llm", "llm")
-                context.filesDir.listFiles()?.forEach { child ->
-                    if (child.name in covered || child.name in denied) return@forEach
-                    if (child.isDirectory) {
-                        addDirectoryToZipFiltered(zipOut, child, "appdata/files/${child.name}/")
-                    } else if (child.isFile && child.length() <= FULL_BACKUP_MAX_FILE_BYTES) {
-                        addFileToZip(zipOut, child, "appdata/files/${child.name}")
-                    }
-                }
-            }
-        }
-
-        Log.i(
-            TAG,
-            "prepareBackupFile: Created backup file ${backupFile.name} (${backupFile.length().fileSizeToString()})"
-        )
-        backupFile
-    }
-
-    private suspend fun restoreFromBackupFile(backupFile: File, config: WebDavConfig) = withContext(Dispatchers.IO) {
-        Log.i(TAG, "restoreFromBackupFile: Starting restore from ${backupFile.absolutePath}")
-
-        // Track whether the backup itself shipped a WAL/SHM. If it didn't, any -wal/-shm
-        // left on disk belongs to the PRE-restore database and must be removed before Room
-        // opens the restored db, or SQLite replays those stale frames over fresh data.
-        var restoredWal = false
-        var restoredShm = false
-
-        // Release the live Room WAL connection BEFORE the zip loop overwrites rikka_hub.db.
-        // The DB is opened in WAL mode, so the close()-time checkpoint folds the OLD connection's
-        // cached WAL frames into whatever rikka_hub.db currently is. If we closed AFTER the
-        // overwrite, that checkpoint would replay pre-restore frames over the freshly restored
-        // bytes and corrupt the import — so the close has to come first. The restore caller
-        // restarts the process afterwards, so Room reopens cleanly on the reconciled file.
-        // (Best-effort: a concurrent DAO access could lazily reopen Room mid-restore; that race
-        // is pre-existing and bounded by the user driving a deliberate, near-idle restore.)
-        if (config.items.contains(WebDavConfig.BackupItem.DATABASE)) {
-            runCatching { appDatabase.close() }
-                .onFailure { Log.w(TAG, "restoreFromBackupFile: appDatabase.close() before restore failed", it) }
-        }
-
-        ZipInputStream(FileInputStream(backupFile)).use { zipIn ->
-            var entry: ZipEntry?
-            while (zipIn.nextEntry.also { entry = it } != null) {
-                entry?.let { zipEntry ->
-                    Log.i(TAG, "restoreFromBackupFile: Processing entry ${zipEntry.name}")
-
-                    when (zipEntry.name) {
-                        "settings.json" -> {
-                            val settingsJson = zipIn.readBytes().toString(Charsets.UTF_8)
-                            Log.i(TAG, "restoreFromBackupFile: Restoring settings")
-                            try {
-                                val migratedJson = SettingsJsonMigrator.migrate(settingsJson)
-                                val settings = json.decodeFromString<Settings>(migratedJson)
-                                settingsStore.update(settings)
-                                Log.i(TAG, "restoreFromBackupFile: Settings restored successfully")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "restoreFromBackupFile: Failed to restore settings", e)
-                                throw Exception("Failed to restore settings: ${e.message}")
-                            }
-                        }
-
-                        "rikka_hub.db", "rikka_hub-wal", "rikka_hub-shm" -> {
-                            if (config.items.contains(WebDavConfig.BackupItem.DATABASE)) {
-                                val dbFile = when (zipEntry.name) {
-                                    "rikka_hub.db" -> context.getDatabasePath("rikka_hub")
-                                    "rikka_hub-wal" -> File(
-                                        context.getDatabasePath("rikka_hub").parentFile,
-                                        "rikka_hub-wal"
-                                    )
-
-                                    "rikka_hub-shm" -> File(
-                                        context.getDatabasePath("rikka_hub").parentFile,
-                                        "rikka_hub-shm"
-                                    )
-
-                                    else -> null
-                                }
-
-                                dbFile?.let { targetFile ->
-                                    Log.i(
-                                        TAG,
-                                        "restoreFromBackupFile: Restoring ${zipEntry.name} to ${targetFile.absolutePath}"
-                                    )
-                                    targetFile.parentFile?.mkdirs()
-                                    FileOutputStream(targetFile).use { outputStream ->
-                                        zipIn.copyTo(outputStream)
-                                    }
-                                    when (zipEntry.name) {
-                                        "rikka_hub-wal" -> restoredWal = true
-                                        "rikka_hub-shm" -> restoredShm = true
-                                    }
-                                    Log.i(
-                                        TAG,
-                                        "restoreFromBackupFile: Restored ${zipEntry.name} (${targetFile.length()} bytes)"
-                                    )
-                                }
-                            }
-                        }
-
-                        else -> {
-                            if (zipEntry.name.startsWith("appdata/")) {
-                                // Phase 20 — full-backup entries (datastore / shared_prefs /
-                                // remaining files). Presence in the zip implies the user made
-                                // a full export, so restore them regardless of config.items.
-                                // Zip-slip guarded via canonical-path containment. Live
-                                // DataStore instances may still flush after this write; the
-                                // restore dialog force-exits the process right after, which
-                                // bounds that window.
-                                val dataDir = context.filesDir.parentFile
-                                val relative = zipEntry.name.removePrefix("appdata/")
-                                val target = File(dataDir, relative)
-                                val rootCanonical = dataDir?.canonicalPath.orEmpty() + File.separator
-                                if (dataDir == null || relative.isBlank() ||
-                                    !target.canonicalPath.startsWith(rootCanonical)
-                                ) {
-                                    Log.w(TAG, "restoreFromBackupFile: Rejected unsafe appdata entry ${zipEntry.name}")
-                                } else {
-                                    target.parentFile?.mkdirs()
-                                    FileOutputStream(target).use { outputStream ->
-                                        zipIn.copyTo(outputStream)
-                                    }
-                                    Log.i(TAG, "restoreFromBackupFile: Restored ${zipEntry.name}")
-                                }
-                            } else if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
-                                zipEntry.name.startsWith("${FileFolders.UPLOAD}/")
-                            ) {
-                                val fileName = zipEntry.name.substringAfter("${FileFolders.UPLOAD}/")
-                                if (fileName.isNotEmpty()) {
-                                    val uploadFolder = File(context.filesDir, FileFolders.UPLOAD)
-                                    if (!uploadFolder.exists()) {
-                                        uploadFolder.mkdirs()
-                                        Log.i(TAG, "restoreFromBackupFile: Created upload directory")
-                                    }
-
-                                    // Guard against zip-slip: reject entries that resolve
-                                    // outside the upload folder (e.g. "../../databases/...").
-                                    val targetFile = SkillPaths.resolveSkillFile(uploadFolder, fileName)
-                                    if (targetFile == null) {
-                                        Log.w(TAG, "restoreFromBackupFile: Rejected unsafe upload entry ${zipEntry.name}")
-                                    } else {
-                                        Log.i(
-                                            TAG,
-                                            "restoreFromBackupFile: Restoring file ${zipEntry.name} to ${targetFile.absolutePath}"
-                                        )
-                                        targetFile.parentFile?.mkdirs()
-                                        try {
-                                            FileOutputStream(targetFile).use { outputStream ->
-                                                zipIn.copyTo(outputStream)
-                                            }
-                                            Log.i(
-                                                TAG,
-                                                "restoreFromBackupFile: Restored ${zipEntry.name} (${targetFile.length()} bytes)"
-                                            )
-                                        } catch (e: Exception) {
-                                            Log.e(TAG, "restoreFromBackupFile: Failed to restore file ${zipEntry.name}", e)
-                                            throw Exception("Failed to restore file ${zipEntry.name}: ${e.message}")
-                                        }
-                                    }
-                                }
-                            } else if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
-                                zipEntry.name.startsWith("${FileFolders.SKILLS}/")
-                            ) {
-                                restoreSkillEntry(zipIn, zipEntry.name)
-                            } else if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
-                                zipEntry.name.startsWith("${FileFolders.FONTS}/")
-                            ) {
-                                val fileName = zipEntry.name.substringAfter("${FileFolders.FONTS}/")
-                                if (fileName.isNotEmpty() && !fileName.contains('/')) {
-                                    val fontsFolder = File(context.filesDir, FileFolders.FONTS).apply { mkdirs() }
-                                    val targetFile = File(fontsFolder, fileName)
-                                    FileOutputStream(targetFile).use { outputStream ->
-                                        zipIn.copyTo(outputStream)
-                                    }
-                                    Log.i(
-                                        TAG,
-                                        "restoreFromBackupFile: Restored ${zipEntry.name} (${targetFile.length()} bytes)"
-                                    )
-                                }
-                            } else {
-                                Log.i(TAG, "restoreFromBackupFile: Skipping entry ${zipEntry.name}")
-                            }
-                        }
-                    }
-
-                    zipIn.closeEntry()
-                }
-            }
-        }
-
-        // A backup exported from upstream RikkaHub lacks the fork-only tables; reconcile the
-        // restored file before Room opens it so the import doesn't crash on first launch.
-        if (config.items.contains(WebDavConfig.BackupItem.DATABASE)) {
-            // appDatabase was already closed before the zip loop (see top of this function), so
-            // the delete + reconcile below run with no live writer attached.
-            val dbDir = context.getDatabasePath("rikka_hub").parentFile
-            if (dbDir != null) {
-                if (!restoredWal) File(dbDir, "rikka_hub-wal").delete()
-                if (!restoredShm) File(dbDir, "rikka_hub-shm").delete()
-            }
-            ImportedDatabaseReconciler.reconcile(context)
-        }
-
-        Log.i(TAG, "restoreFromBackupFile: Restore completed successfully")
-    }
-
-    private fun checkpointDatabase() {
-        try {
-            appDatabase.openHelper.writableDatabase
-                .query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
-            Log.i(TAG, "checkpointDatabase: WAL checkpoint(TRUNCATE) done")
-        } catch (e: Exception) {
-            // Non-fatal: the -wal/-shm files are still copied below, so no committed data
-            // is lost — the snapshot just isn't guaranteed torn-free for this run.
-            Log.w(TAG, "checkpointDatabase: WAL checkpoint failed; copying db+wal+shm as-is", e)
-        }
-    }
-
-    private fun addFileToZip(zipOut: ZipOutputStream, file: File, entryName: String) {
-        FileInputStream(file).use { fis ->
-            val zipEntry = ZipEntry(entryName)
-            zipOut.putNextEntry(zipEntry)
-            fis.copyTo(zipOut)
-            zipOut.closeEntry()
-            Log.d(TAG, "addFileToZip: Added $entryName (${file.length()} bytes) to zip")
-        }
-    }
-
-    /**
-     * Phase 20 — recursive zip with a per-file size cap, for the full-backup extras.
-     * Oversized files are skipped (logged) rather than failing the whole export.
-     */
-    private fun addDirectoryToZipFiltered(
-        zipOut: ZipOutputStream,
-        rootDir: File,
-        entryPrefix: String,
-    ) {
-        rootDir.walkTopDown().forEach { file ->
-            if (!file.isFile) return@forEach
-            if (file.length() > FULL_BACKUP_MAX_FILE_BYTES) {
-                Log.w(TAG, "addDirectoryToZipFiltered: skipping oversized ${file.absolutePath} (${file.length()} bytes)")
-                return@forEach
-            }
-            val relativePath = file.relativeTo(rootDir).invariantSeparatorsPath
-            runCatching { addFileToZip(zipOut, file, "$entryPrefix$relativePath") }
-                .onFailure { Log.w(TAG, "addDirectoryToZipFiltered: failed to add ${file.absolutePath}", it) }
-        }
-    }
-
-    private fun addDirectoryToZip(
-        zipOut: ZipOutputStream,
-        rootDir: File,
-        currentDir: File,
-        entryPrefix: String,
-    ) {
-        currentDir.listFiles()?.forEach { file ->
-            if (file.isDirectory) {
-                addDirectoryToZip(
-                    zipOut = zipOut,
-                    rootDir = rootDir,
-                    currentDir = file,
-                    entryPrefix = entryPrefix,
-                )
-            } else if (file.isFile) {
-                val relativePath = file.relativeTo(rootDir).invariantSeparatorsPath
-                addFileToZip(zipOut, file, "$entryPrefix$relativePath")
-            }
-        }
-    }
-
-    private fun restoreSkillEntry(zipIn: ZipInputStream, entryName: String) {
-        val relativePath = entryName.substringAfter("${FileFolders.SKILLS}/")
-        val skillName = relativePath.substringBefore('/', missingDelimiterValue = "")
-        val skillRelativePath = relativePath.substringAfter('/', missingDelimiterValue = "")
-
-        if (skillName.isBlank() || skillRelativePath.isBlank()) {
-            Log.w(TAG, "restoreFromBackupFile: Invalid skill entry $entryName")
-            return
-        }
-
-        val skillsRoot = File(context.filesDir, FileFolders.SKILLS).apply { mkdirs() }
-        val skillDir = SkillPaths.resolveSkillDir(skillsRoot, skillName)
-            ?: throw Exception("Invalid skill directory: $entryName")
-        val targetFile = SkillPaths.resolveSkillFile(skillDir, skillRelativePath)
-            ?: throw Exception("Invalid skill file path: $entryName")
-
-        skillDir.mkdirs()
-        targetFile.parentFile?.mkdirs()
-
-        try {
-            FileOutputStream(targetFile).use { outputStream ->
-                zipIn.copyTo(outputStream)
-            }
-            Log.i(TAG, "restoreFromBackupFile: Restored skill file $entryName (${targetFile.length()} bytes)")
-        } catch (e: Exception) {
-            Log.e(TAG, "restoreFromBackupFile: Failed to restore skill file $entryName", e)
-            throw Exception("Failed to restore skill file $entryName: ${e.message}")
-        }
-    }
-
-    private fun addVirtualFileToZip(zipOut: ZipOutputStream, name: String, content: String) {
-        val zipEntry = ZipEntry(name)
-        zipOut.putNextEntry(zipEntry)
-        zipOut.write(content.toByteArray())
-        zipOut.closeEntry()
-        Log.i(TAG, "addVirtualFileToZip: $name (${content.length} bytes)")
-    }
 }
 
 data class WebDavBackupItem(

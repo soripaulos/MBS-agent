@@ -7,49 +7,53 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Deferred
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.ui.components.ui.OutlinedNumberInput
 import me.rerere.rikkahub.ui.components.ui.RabbitLoadingIndicator
 
 @Composable
 fun CompressContextDialog(
+    defaultTargetTokens: Int,
     onDismiss: () -> Unit,
-    onConfirm: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job
+    onConfirm: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Deferred<Result<Unit>>
 ) {
     var additionalPrompt by remember { mutableStateOf("") }
-    var selectedTokens by remember { mutableIntStateOf(2000) }
-    var keepRecentMessages by remember { mutableIntStateOf(32) }
-    val tokenOptions = listOf(500, 1000, 2000, 4000)
-    val keepRecentOptions = listOf(0, 16, 32, 64)
-    var currentJob by remember { mutableStateOf<Job?>(null) }
-    val isLoading = currentJob?.isActive == true
+    var targetTokensK by remember(defaultTargetTokens) { mutableStateOf("") }
+    var keepRecentMessages by remember { mutableStateOf(32) }
+    var currentDeferred by remember { mutableStateOf<Deferred<Result<Unit>>?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val isLoading = currentDeferred?.isActive == true
 
-    // Monitor job completion
-    LaunchedEffect(currentJob) {
-        currentJob?.join()
-        if (currentJob?.isCompleted == true && currentJob?.isCancelled == false) {
-            onDismiss()
-        }
-        currentJob = null
+    // Monitor compression completion. Only dismiss on success -- a failed compression used to
+    // complete this coroutine "normally" (Result.failure, not a thrown exception), so the
+    // dialog dismissed on failure just like on success. Keep it open and show the message
+    // inline instead.
+    LaunchedEffect(currentDeferred) {
+        val deferred = currentDeferred ?: return@LaunchedEffect
+        runCatching { deferred.await() }.getOrNull()?.fold(
+            onSuccess = { onDismiss() },
+            onFailure = { errorMessage = it.message ?: "Unknown error" },
+        )
+        currentDeferred = null
     }
 
     AlertDialog(
@@ -86,44 +90,36 @@ fun CompressContextDialog(
                         text = stringResource(R.string.chat_page_compress_target_tokens),
                         style = MaterialTheme.typography.labelMedium
                     )
-                    SingleChoiceSegmentedButtonRow(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        tokenOptions.forEachIndexed { index, tokens ->
-                            SegmentedButton(
-                                selected = selectedTokens == tokens,
-                                onClick = { selectedTokens = tokens },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = tokenOptions.size
-                                )
-                            ) {
-                                Text("$tokens")
-                            }
-                        }
-                    }
-
-                    // Keep recent messages selector
-                    Text(
-                        text = stringResource(R.string.chat_page_compress_keep_recent),
-                        style = MaterialTheme.typography.labelMedium
+                    OutlinedTextField(
+                        value = targetTokensK,
+                        onValueChange = { value ->
+                            targetTokensK = value.filter(Char::isDigit).take(7)
+                        },
+                        singleLine = true,
+                        suffix = { Text("k") },
+                        placeholder = { Text("${(defaultTargetTokens + 999) / 1_000}") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { focusState ->
+                                if (!focusState.isFocused) {
+                                    targetTokensK = targetTokensK.toIntOrNull()
+                                        ?.coerceIn(1, Int.MAX_VALUE / 1_000)
+                                        ?.toString()
+                                        .orEmpty()
+                                }
+                            },
                     )
-                    SingleChoiceSegmentedButtonRow(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        keepRecentOptions.forEachIndexed { index, count ->
-                            SegmentedButton(
-                                selected = keepRecentMessages == count,
-                                onClick = { keepRecentMessages = count },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = keepRecentOptions.size
-                                )
-                            ) {
-                                Text("$count")
-                            }
-                        }
-                    }
+
+                    // Keep recent messages input
+                    OutlinedNumberInput(
+                        value = keepRecentMessages,
+                        onValueChange = { keepRecentMessages = it },
+                        label = stringResource(R.string.chat_page_compress_keep_recent),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
 
                     // Additional context input
                     OutlinedTextField(
@@ -145,20 +141,37 @@ fun CompressContextDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
+
+                    // Failure from the previous attempt, if any
+                    errorMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
         },
         confirmButton = {
             if (isLoading) {
                 TextButton(onClick = {
-                    currentJob?.cancel()
-                    currentJob = null
+                    currentDeferred?.cancel()
+                    currentDeferred = null
                 }) {
                     Text(stringResource(R.string.cancel))
                 }
             } else {
                 TextButton(onClick = {
-                    currentJob = onConfirm(additionalPrompt, selectedTokens, keepRecentMessages)
+                    errorMessage = null
+                    val targetTokens = targetTokensK.toIntOrNull()
+                        ?.coerceIn(1, Int.MAX_VALUE / 1_000)
+                        ?.toLong()
+                        ?.times(1_000L)
+                        ?.coerceAtMost(Int.MAX_VALUE.toLong())
+                        ?.toInt()
+                        ?: defaultTargetTokens
+                    currentDeferred = onConfirm(additionalPrompt, targetTokens, keepRecentMessages)
                 }) {
                     Text(stringResource(R.string.confirm))
                 }
