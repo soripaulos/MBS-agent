@@ -43,6 +43,19 @@ class CodexOAuthManager(
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
     private var callbackPort: Int? = null
     private val sessions = ConcurrentHashMap<String, OAuthSession>()
+
+    /**
+     * States whose callback was already accepted. The loopback callback is routinely
+     * delivered more than once — the browser re-requests it on refresh/back-navigation,
+     * some browsers prefetch or retry the redirect target, and a restored tab replays it.
+     * Because acceptance consumes the state out of [sessions], every later delivery used to
+     * fall through to "OAuth state mismatch" and overwrite an already-successful status
+     * with an error toast (the account was signed in fine, but the UI said it failed).
+     *
+     * Remembering the states we already honoured lets a repeat delivery render the success
+     * page and change nothing. Bounded so a long-lived process can't accumulate states.
+     */
+    private val completedStates = ConcurrentHashMap.newKeySet<String>()
     private val _status = MutableStateFlow<CodexOAuthStatus>(CodexOAuthStatus.Idle)
     val status: StateFlow<CodexOAuthStatus> = _status.asStateFlow()
 
@@ -108,6 +121,14 @@ class CodexOAuthManager(
                             val error = call.request.queryParameters["error"]
                             val session = callbackState?.let(sessions::remove)
                             when {
+                                // Repeat delivery of a callback we already accepted (browser
+                                // refresh / back / prefetch). Show the success page again and
+                                // leave the status alone — the sign-in already happened.
+                                session == null && callbackState != null &&
+                                    completedStates.contains(callbackState) -> {
+                                    call.respondText(callbackPage(true), ContentType.Text.Html)
+                                }
+
                                 session == null -> {
                                     _status.value = CodexOAuthStatus.Error("OAuth state mismatch")
                                     call.respondText(callbackPage(false), ContentType.Text.Html)
@@ -124,6 +145,15 @@ class CodexOAuthManager(
                                 }
 
                                 else -> {
+                                    // Mark accepted BEFORE the (async) exchange so a duplicate
+                                    // delivery arriving mid-exchange is recognised as a repeat
+                                    // rather than a mismatch.
+                                    callbackState?.let {
+                                        // Cheap bound: sign-ins are rare, so a full reset
+                                        // past a small cap is fine and keeps this leak-free.
+                                        if (completedStates.size > 16) completedStates.clear()
+                                        completedStates.add(it)
+                                    }
                                     call.respondText(callbackPage(true), ContentType.Text.Html)
                                     scope.launch {
                                         try {
