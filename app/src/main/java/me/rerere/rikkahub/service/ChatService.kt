@@ -427,6 +427,14 @@ class ChatService(
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
 
+    // Jev (TypeSafe System One) turn planner. Resolved lazily from Koin so the constructor
+    // (and every test that builds a ChatService) is unchanged; null when Koin isn't running.
+    private val jevService: me.rerere.rikkahub.jev.JevService? by lazy {
+        runCatching {
+            org.koin.core.context.GlobalContext.get().get<me.rerere.rikkahub.jev.JevService>()
+        }.getOrNull()
+    }
+
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
     private val _sessionsVersion = MutableStateFlow(0L)
@@ -1484,6 +1492,49 @@ class ChatService(
         }
     }
 
+    /**
+     * Ask Jev how to handle the user's latest message. Returns null when Jev is off, the last
+     * message isn't a fresh user turn, or nothing applies. Never throws except on cancellation.
+     */
+    private suspend fun planJevTurn(
+        conversation: Conversation,
+        assistant: Assistant,
+    ): me.rerere.rikkahub.jev.JevTurnPlan? {
+        val jev = jevService ?: return null
+        val config = jev.config.value
+        if (!config.isUsable) return null
+        val messages = conversation.currentMessages
+        val last = messages.lastOrNull() ?: return null
+        if (last.role != MessageRole.USER) return null
+        val userText = last.toText().trim()
+        if (userText.isEmpty()) return null
+        val previousAssistant = messages.dropLast(1).lastOrNull { it.role == MessageRole.ASSISTANT }?.toText()
+        val skills = if (config.skillHint.enabled && assistant.enabledSkills.isNotEmpty()) {
+            runCatching { skillManager.listSkills() }.getOrDefault(emptyList())
+                .filter { it.name in assistant.enabledSkills }
+                .associate { it.name to it.description }
+        } else {
+            emptyMap()
+        }
+        val routingAllowed = !(config.modelRouter.respectManualChatModel && conversation.chatModelId != null)
+        // Belt and braces: planTurn already fails open, but nothing Jev-related may ever
+        // abort a turn.
+        val plan = try {
+            jev.planTurn(
+                userMessage = userText,
+                previousAssistantMessage = previousAssistant,
+                skills = skills,
+                routingAllowed = routingAllowed,
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "planJevTurn failed; continuing without Jev", e)
+            return null
+        }
+        return plan.takeUnless { it.isEmpty }
+    }
+
     // ---- 处理消息补全 ----
 
     private suspend fun handleMessageComplete(
@@ -1502,12 +1553,35 @@ class ChatService(
         val initialConversation = getConversationFlow(conversationId).value
         val assistant = settings.getAssistantById(initialConversation.assistantId)
             ?: settings.getCurrentAssistant()
-        val model = settings.findModelById(
+        val defaultModel = settings.findModelById(
             initialConversation.chatModelId ?: assistant.chatModelId ?: settings.chatModelId
         )
             ?: throw IllegalStateException(
                 "No chat model selected. Pick one in Settings → Default models, or send /model in Telegram."
             )
+        // Jev turn plan: model routing, skill hint and the user's USER_MESSAGE rules, all from
+        // ONE ~100 ms call. Only on a fresh turn (last message is the user's), never on a
+        // regenerate or a resume after tool approval, so a turn never switches model midway.
+        val jevPlan = if (messageRange == null) planJevTurn(initialConversation, assistant) else null
+        val model = jevPlan?.modelId
+            ?.let { id -> settings.findModelById(id) }
+            ?.takeIf { routed ->
+                val provider = routed.findProvider(settings.providers)
+                provider != null && provider.enabled &&
+                    // Never route a tool-using assistant onto a model that can't call tools.
+                    (ModelAbility.TOOL in routed.abilities || ModelAbility.TOOL !in defaultModel.abilities)
+            }
+            ?.also { routed ->
+                if (routed.id != defaultModel.id) {
+                    jevService?.log(
+                        "router",
+                        "${routed.displayName.ifBlank { routed.modelId }} instead of " +
+                            "${defaultModel.displayName.ifBlank { defaultModel.modelId }}: ${jevPlan?.modelReason}",
+                        0,
+                    )
+                }
+            }
+            ?: defaultModel
         // Defence against an upstream-Settings bug where disabling all providers can leave
         // the assistant's chatModelId pointing at a model whose provider has enabled=false:
         // the model lookup walks every provider regardless of state, so without this gate
@@ -1614,8 +1688,11 @@ class ChatService(
                 // anything else) gets its runtime context into the system prompt without
                 // having to plumb a parameter all the way through sendMessage. Returns null
                 // for in-app conversations that didn't register one.
-                systemAddendum = me.rerere.rikkahub.data.ai.tools
-                    .ConversationSystemAddendum.get(conversationId),
+                systemAddendum = listOfNotNull(
+                    me.rerere.rikkahub.data.ai.tools.ConversationSystemAddendum.get(conversationId),
+                    jevPlan?.instructions?.takeIf { it.isNotEmpty() }?.joinToString("\n") { "- $it" }
+                        ?.let { "Notes for this turn:\n$it" },
+                ).joinToString("\n\n").ifBlank { null },
                 isToolAutoApproved = { toolName ->
                     // YOLO mode ("I AM STUPID" toggle in Settings → Tool approvals): every
                     // tool auto-approves. User opted into this explicitly. HARDLINE still

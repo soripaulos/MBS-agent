@@ -150,6 +150,7 @@ val dataSourceModule = module {
             conversationRepo = get(),
             aiLoggingManager = get(),
             systemPromptBuilder = get(),
+            jevService = get(),
         )
     }
 

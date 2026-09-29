@@ -508,6 +508,9 @@ class GenerationLoop(
     private val conversationRepo: ConversationRepository,
     private val aiLoggingManager: AILoggingManager,
     private val systemPromptBuilder: SystemPromptBuilder,
+    // Jev (TypeSafe System One) tool guard. Nullable so tests and callers that don't wire it
+    // get the vanilla approval gate; the guard itself fails open when Jev is off or down.
+    private val jevService: me.rerere.rikkahub.jev.JevService? = null,
 ) {
     fun generateText(
         settings: Settings,
@@ -796,6 +799,13 @@ class GenerationLoop(
                 // flips to Pending and a duplicate prompt is emitted even though X is
                 // now persisted-approved.
                 var hasPendingApproval = false
+                // What the user actually asked for, so the Jev guard can judge whether a
+                // call is on-task. Only computed when the guard might run.
+                val latestUserRequest = if (jevService?.config?.value?.isUsable == true) {
+                    messages.lastOrNull { it.role == MessageRole.USER }?.toText()?.take(4_000)
+                } else {
+                    null
+                }
                 val updatedTools = ArrayList<UIMessagePart.Tool>(toolCalls.size)
                 for (tool in toolCalls) {
                     val toolDef = toolsInternal.find { it.name == tool.toolName }
@@ -818,18 +828,50 @@ class GenerationLoop(
                                     "should run it themselves in a terminal outside the agent."
                             ))
                         }
-                        // Tool needs approval and state is Auto:
-                        toolDef?.needsApproval(tool.inputAsJson()) == true &&
-                            tool.approvalState is ToolApprovalState.Auto -> {
+                        // Tool state is Auto: decide between run / ask / refuse.
+                        toolDef != null && tool.approvalState is ToolApprovalState.Auto -> {
+                            val approvalGated = toolDef.needsApproval(tool.inputAsJson())
                             // Fresh per-tool auto-approval check (was a frozen pre-
                             // resolved set). Costs a DataStore.first() per tool but tools
                             // are typically <5 per turn so the latency is negligible, and
                             // freshness matters for the YOLO toggle / mid-iteration grants.
-                            if (isToolAutoApproved(tool.toolName)) {
-                                tool  // leave as Auto so the executor runs it without prompting
-                            } else {
-                                hasPendingApproval = true
-                                tool.copy(approvalState = ToolApprovalState.Pending)
+                            val preApproved = approvalGated && isToolAutoApproved(tool.toolName)
+                            // Jev tool guard: may auto-approve a safe, on-task call that
+                            // would otherwise prompt, escalate a risky pre-approved one, or
+                            // apply the user's BEFORE_TOOL rules. NoChange whenever Jev is
+                            // off, excluded, unsure or unreachable.
+                            val verdict = jevService?.guardTool(
+                                toolName = tool.toolName,
+                                toolDescription = toolDef.description,
+                                argumentsJson = tool.input,
+                                userRequest = latestUserRequest,
+                                approvalGated = approvalGated,
+                                preApproved = preApproved,
+                                unattended = conversationId != null &&
+                                    me.rerere.rikkahub.data.ai.tools.HeadlessConversations.isHeadless(conversationId),
+                            ) ?: me.rerere.rikkahub.jev.JevGuardVerdict.NoChange
+                            when (verdict) {
+                                is me.rerere.rikkahub.jev.JevGuardVerdict.Block -> {
+                                    Log.i(TAG, "jev blocked ${tool.toolName}: ${verdict.reason}")
+                                    tool.copy(approvalState = ToolApprovalState.Denied(verdict.reason))
+                                }
+
+                                is me.rerere.rikkahub.jev.JevGuardVerdict.RequireApproval -> {
+                                    Log.i(TAG, "jev escalated ${tool.toolName}: ${verdict.reason}")
+                                    notifyJev("${tool.toolName}: ${verdict.reason}")
+                                    hasPendingApproval = true
+                                    tool.copy(approvalState = ToolApprovalState.Pending)
+                                }
+
+                                is me.rerere.rikkahub.jev.JevGuardVerdict.AutoApprove -> tool
+
+                                me.rerere.rikkahub.jev.JevGuardVerdict.NoChange ->
+                                    if (approvalGated && !preApproved) {
+                                        hasPendingApproval = true
+                                        tool.copy(approvalState = ToolApprovalState.Pending)
+                                    } else {
+                                        tool  // leave as Auto so the executor runs it without prompting
+                                    }
                             }
                         }
                         // State is Pending -> keep waiting
@@ -1233,6 +1275,13 @@ class GenerationLoop(
      * user is not stranded inside Chrome / Termux / etc. If the user manually switched apps
      * mid-turn, we skip the auto-return and surface a Toast explaining the safety behavior.
      */
+    /** Tells the user why Jev paused a call that would otherwise have run on its own. */
+    private fun notifyJev(message: String) {
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(context.applicationContext, "Jev: $message", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun handleAutoReturnAfterTurn() {
         if (!AgentTurnTracker.didNavigateAway()) return
         // Only auto-return when the agent actually drove the destination app via screen

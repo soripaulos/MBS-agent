@@ -509,6 +509,10 @@ class RouteActivity : ComponentActivity() {
                                 SettingSubAgentsPage()
                             }
 
+                            entry<Screen.SettingJev> {
+                                me.rerere.rikkahub.ui.pages.setting.SettingJevPage()
+                            }
+
                             entry<Screen.SettingDonate> {
                                 SettingDonatePage()
                             }
@@ -799,6 +803,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingSubAgents : Screen
+
+    @Serializable
+    data object SettingJev : Screen
 
     @Serializable
     data object SettingDonate : Screen

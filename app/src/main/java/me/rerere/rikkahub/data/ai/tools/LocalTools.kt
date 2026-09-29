@@ -822,6 +822,14 @@ class LocalTools(
         )
     }
 
+    // Resolved lazily from Koin (like ChatService does) so LocalTools' constructor, and
+    // every test that builds one, is unchanged. Null when Koin isn't running.
+    private val jevService: me.rerere.rikkahub.jev.JevService? by lazy {
+        runCatching {
+            org.koin.core.context.GlobalContext.get().get<me.rerere.rikkahub.jev.JevService>()
+        }.getOrNull()
+    }
+
     fun getTools(
         options: List<LocalToolOption>,
         invocationContext: ToolInvocationContext = ToolInvocationContext.EMPTY,
@@ -1182,6 +1190,31 @@ class LocalTools(
             tools.add(keyboardEditorInfoTool(keyboardApiClient))
             tools.add(keyboardSetCursorTool(keyboardApiClient))
             tools.add(keyboardSelectRangeTool(keyboardApiClient))
+        }
+        // Jev (TypeSafe System One) helpers. Registered only while Jev is enabled with a key,
+        // and — for the browser / phone ones — only when the assistant already has that
+        // capability, so Jev never widens what an assistant can reach.
+        val jev = jevService
+        val jevConfig = jev?.config?.value
+        if (jev != null && jevConfig != null && jevConfig.isUsable) {
+            if (jevConfig.decideTool) {
+                tools.add(me.rerere.rikkahub.jev.jevDecideTool(jev))
+            }
+            if (jevConfig.browser.enabled && options.contains(LocalToolOption.Browser)) {
+                val browserPrefs = browserPreferences.snapshotBlocking()
+                tools.add(
+                    me.rerere.rikkahub.jev.browserFindElementTool(
+                        jev = jev,
+                        allowClick = browserPrefs[me.rerere.rikkahub.browser.BrowserToolDefaults.CLICK] == true,
+                        allowType = browserPrefs[me.rerere.rikkahub.browser.BrowserToolDefaults.TYPE] == true,
+                    )
+                )
+                tools.add(me.rerere.rikkahub.jev.browserCheckTool(jev))
+            }
+            if (jevConfig.phone.enabled && options.contains(LocalToolOption.ScreenAutomation)) {
+                tools.add(me.rerere.rikkahub.jev.screenFindNodeTool(jev))
+                tools.add(me.rerere.rikkahub.jev.screenCheckTool(jev))
+            }
         }
         // Centralised opt-in to needsApproval. Tool factories themselves don't have to know
         // whether their op is destructive — ToolApprovalDefaults is the single source of

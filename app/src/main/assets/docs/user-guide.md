@@ -169,6 +169,67 @@ doesn't expose.
 
 ---
 
+## 6c. Jev: fast decisions next to your chat model
+
+Settings → Model & services → **Jev (fast decisions)**. Jev is TypeSafe's "System One" model.
+It does not chat. It answers typed questions about some text — **yes/no**, **pick one of up to
+255 options**, or **a score on a 2–10 level scale** — with calibrated probabilities in about
+0.1 s, for roughly $0.04 per million input tokens (output is free). Your normal model stays in
+charge. Jev takes the small, frequent judgements that would otherwise cost the model a
+round-trip or a pile of context.
+
+Paste your TypeSafe API key, switch **Enable Jev** on and tap **Test connection**. Every feature
+**fails open**: if Jev is off, slow (past the per-call timeout), unreachable or unsure, the app
+does exactly what it would have done without it.
+
+What it does, each with its own switch and confidence threshold:
+
+- **Tool-call guard.** This runs in the agent loop before a tool executes, and sees your request
+  and the call. The hardline floor (rm -rf / and co.) always runs first.
+  - *Stop risky calls for approval* (on by default): something you pre-allowed (Always-allow,
+    YOLO) still pauses for approval when Jev rates it risky or not what you asked for. A toast
+    says why.
+  - *Skip approval for safe calls* (off by default): an approval-gated call runs immediately
+    when Jev is confident it is harmless **and** on-task. This is the "smart YOLO" middle
+    ground.
+  - Unattended runs (cron, sub-agents, Telegram) have nobody to ask. By default they carry on;
+    turn on *Block risky calls in unattended runs* to refuse instead.
+- **Model router.** Before each new turn Jev rates your message against your own definitions of
+  "simple" and "complex".
+  - Simple turns run on the **fast model** you pick. Complex turns run on the **strong model**,
+    or stay on the chat's model if you leave that empty.
+  - The message shows which model answered. A turn never switches model midway.
+  - Chats where you picked a model yourself are left alone unless you turn that off.
+- **Skill hint.** Jev picks the enabled skill that fits the request, and the agent is told to
+  load it first.
+- **Browser helpers** (assistants with the in-app browser):
+  - `browser_find_element` takes a description ("the Sign in button", "search box"). Jev picks
+    the element from up to 150 candidates and returns a selector. It can also click or type in
+    the same call, only when confident, and only if browser_click / browser_type are on in
+    Settings → Browser.
+  - `browser_check` answers a yes/no question about the page ("did the order go through?")
+    without the model reading the page text.
+- **Phone-use helpers** (assistants with screen automation):
+  - `screen_find_node` does the same over the accessibility tree and returns a `node_id` for
+    click_node / set_text, or taps / types directly.
+  - `screen_check` answers a yes/no question about the current screen.
+- **jev_decide.** A general tool for the agent to hand off bulk judgement: "which of these 60
+  notifications need a reply", "rank these results for my goal", "rate each ticket's severity".
+  Up to 100 items are judged in parallel, and results come back sorted and filtered.
+- **Your rules.** Yes/no questions with an action. All rules for the same moment share one
+  Jev call.
+  - *On each message*: "Is this about my calendar?" → add an instruction ("use the calendar
+    tools, times in Africa/Addis_Ababa"), or "Is this a coding task?" → use a specific model.
+  - *Before a tool runs* (optionally only for `send_*`, `telegram_*`, …): "Is this message going
+    to someone other than me?" → ask me first, or block with a reason the agent sees.
+
+Settings → Jev also shows lifetime usage (calls, failures, average latency, tokens,
+estimated cost) and a live **Recent decisions** log. Use the log to tune thresholds: raise
+one if Jev acts on weak guesses, lower it if it never kicks in.
+
+Jev is text-only: no images. It is not for writing text, arithmetic, counting or dates, so the
+app never asks it to.
+
 ## 7. MCP servers (incl. OAuth)
 
 Settings → MCP connects external Model Context Protocol servers (extra tools). Streamable

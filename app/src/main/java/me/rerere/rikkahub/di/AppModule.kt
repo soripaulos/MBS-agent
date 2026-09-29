@@ -50,6 +50,10 @@ val appModule = module {
     single { TelegramChatRepository(get<me.rerere.rikkahub.data.db.AppDatabase>().telegramChatDao()) }
     single { TelegramBotPreferences(get()) }
     single { me.rerere.rikkahub.browser.BrowserPreferences(get()) }
+    // Jev (TypeSafe System One): fast typed decisions around the chat model.
+    single { me.rerere.rikkahub.jev.JevPreferences(get()) }
+    single { me.rerere.rikkahub.jev.JevClient(get()) }
+    single { me.rerere.rikkahub.jev.JevService(get(), get()) }
     single { me.rerere.rikkahub.data.preferences.TermuxPreferences(get()) }
     // Pass 3: Telegram-bound screenshot streamer for headless browser mode. Bound to the
     // [BrowserScreenshotStreamer] interface so [BrowserController.streamScreenshotIfHeadless]

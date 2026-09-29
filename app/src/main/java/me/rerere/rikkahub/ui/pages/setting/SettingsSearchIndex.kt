@@ -81,6 +81,12 @@ fun settingsSearchIndex(developerMode: Boolean): List<SettingsSearchEntry> {
             route = Screen.SettingSubAgents,
         ),
         SettingsSearchEntry(
+            titleRes = R.string.setting_page_jev,
+            descriptionRes = R.string.setting_page_jev_desc,
+            groupRes = R.string.setting_page_model_and_services,
+            route = Screen.SettingJev,
+        ),
+        SettingsSearchEntry(
             titleRes = R.string.setting_page_web_server,
             descriptionRes = R.string.setting_page_web_server_desc,
             groupRes = R.string.setting_page_model_and_services,
