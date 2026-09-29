@@ -9,6 +9,7 @@ import android.widget.Toast
 import me.rerere.rikkahub.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.rikkahub.service.AgentOverlay
 import me.rerere.rikkahub.service.RikkaAccessibilityService
@@ -473,6 +475,31 @@ internal object LoopGuard {
     }
 }
 
+/**
+ * On resume after a tool-approval decision, picks every tool from the same model step that
+ * should execute now: the ones the user acted on ([UIMessagePart.Tool.canResumeExecution] -
+ * Approved/Denied/Answered) plus any sibling that was classified `Auto` but never got to run
+ * because the step broke early on a *different*, Pending sibling (#107 - otherwise those Auto
+ * tools are orphaned forever and the model never learns their results). Order matches [tools],
+ * i.e. the original call order. A tool still Pending is never included. This does not change
+ * [canResumeToolExecution] itself - Auto stays false there ([ToolApprovalStateTest] and the
+ * top-of-loop Pending-detection both rely on that); the inclusion happens only at this resume
+ * call site.
+ *
+ * An Auto tool with [UIMessagePart.Tool.executionStartedAt] set is excluded from the "never
+ * got to run" clause even though it isn't executed: that shape means a previous attempt was
+ * interrupted mid-execute (see [UIMessagePart.Tool.isInterruptedAttempt]), not that it's
+ * still waiting its turn. In production the top-of-generateText replay-safety pass already
+ * flips that tool to Denied before this function runs, but this pure function must not rely
+ * on that ordering to avoid re-running it.
+ */
+internal fun resumableToolsIncludingUnexecutedAuto(
+    tools: List<UIMessagePart.Tool>,
+): List<UIMessagePart.Tool> = tools.filter { tool ->
+    tool.canResumeExecution ||
+        (tool.approvalState is ToolApprovalState.Auto && !tool.isExecuted && tool.executionStartedAt == null)
+}
+
 class GenerationLoop(
     private val context: Context,
     private val providerManager: ProviderManager,
@@ -687,6 +714,52 @@ class GenerationLoop(
                             messages = messages.dropLast(1) + lastMsg.copy(parts = newParts)
                             emit(GenerationChunk.Messages(messages))
                         }
+                    } else {
+                        // A stop mid-turn must leave the assistant message finalized the same
+                        // way a normal completion does below (e.g. ThinkTagTransformer closing
+                        // an unclosed <think> block) — otherwise stopGeneration persists a shape
+                        // the rest of the app never produces on its own. Reuse the exact same
+                        // transformer chain calls the success path runs, just before rethrowing.
+                        // The coroutine's Job is already cancelled here, so a plain suspend call
+                        // (transformer I/O, or emit reaching ChatService's collector and its own
+                        // suspend writes) would immediately re-throw — run under NonCancellable,
+                        // same as ChatService's own onCompletion persist for this exact reason.
+                        //
+                        // This flow ends in .flowOn(Dispatchers.IO), so this block runs in the
+                        // upstream producer coroutine: emit() can still throw (e.g. the
+                        // downstream channel already closed because the consumer tore down
+                        // first) even under NonCancellable. That must never replace the
+                        // original CancellationException — best-effort only: log and fall
+                        // through to the unconditional rethrow below regardless.
+                        // (stopGeneration itself persists after joining these jobs, so skipping
+                        // this finalize on failure is safe — see ChatService.stopGeneration.)
+                        try {
+                            withContext(NonCancellable) {
+                                messages = messages.visualTransforms(
+                                    transformers = outputTransformers,
+                                    context = context,
+                                    model = model,
+                                    assistant = assistant,
+                                    settings = settings
+                                )
+                                messages = messages.onGenerationFinish(
+                                    transformers = outputTransformers,
+                                    context = context,
+                                    model = model,
+                                    assistant = assistant,
+                                    settings = settings
+                                )
+                                if (messages.isNotEmpty()) {
+                                    messages = messages.slice(0 until messages.lastIndex) + messages.last().copy(
+                                        finishedAt = Clock.System.now()
+                                            .toLocalDateTime(TimeZone.currentSystemDefault())
+                                    )
+                                }
+                                emit(GenerationChunk.Messages(messages))
+                            }
+                        } catch (finalizeError: Throwable) {
+                            Log.w(TAG, "generateText: cancellation finalize failed, stop proceeds without it", finalizeError)
+                        }
                     }
                     throw t
                 }
@@ -792,9 +865,11 @@ class GenerationLoop(
 
                 toolsToProcess = updatedTools
             } else {
-                // Resuming after user interaction - use the resumable tools directly.
-                Log.i(TAG, "generateText: resuming with ${pendingTools.size} resumable tools")
-                toolsToProcess = messages.last().getTools().filter { it.canResumeExecution }
+                // Resuming after user interaction - use the resumable tools, plus any Auto
+                // sibling from the same step that never executed because the step broke early
+                // on a Pending tool (#107).
+                toolsToProcess = resumableToolsIncludingUnexecutedAuto(messages.last().getTools())
+                Log.i(TAG, "generateText: resuming with ${toolsToProcess.size} resumable tools")
             }
 
             // Handle tools (execute approved tools, handle denied tools)
@@ -1061,6 +1136,14 @@ class GenerationLoop(
                                 output = maybeTruncateToolOutput(tool.toolCallId, result, hasShellAccess)
                             )
                         }.onFailure {
+                            // runCatching also captures CancellationException (e.g. the user
+                            // pressed stop mid tool execution). That must propagate, not turn
+                            // into a tool_failed envelope: a swallowed cancellation leaves a
+                            // misleading tool_failed result instead of the clean
+                            // cancelled-by-user one from cancelToolByUser, and the loop may
+                            // wrongly continue to the next sibling tool. Same pattern as the
+                            // catch above this runCatching block.
+                            if (it is CancellationException) throw it
                             // Stack trace stays in logcat for debugging; the JSON envelope
                             // sent BACK to the LLM gets just the exception's message and a
                             // short class hint. Stuffing the full multi-frame R8-obfuscated
