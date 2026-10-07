@@ -179,6 +179,20 @@ class RikkaHubApp : Application() {
             me.rerere.rikkahub.service.StalledRunWatchdogWorker.schedule(this)
         }.onFailure { Log.w(TAG, "failed to schedule StalledRunWatchdogWorker", it) }
 
+        // Keep the ChatGPT (Codex) model list current: new catalog models appear on their own,
+        // retired ones get flagged. Periodic worker + one check shortly after start.
+        runCatching {
+            me.rerere.rikkahub.data.codex.CodexModelSync.schedule(this)
+        }.onFailure { Log.w(TAG, "failed to schedule CodexModelSync", it) }
+        get<AppScope>().launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(20_000)
+            runCatching {
+                me.rerere.rikkahub.data.codex.CodexModelSync.syncIfDue(
+                    this@RikkaHubApp, get(), get(), get(),
+                )
+            }.onFailure { Log.w(TAG, "Codex model sync on start failed", it) }
+        }
+
         // Auto-recover from a prior native crash inside a local-runtime JNI lib
         // (LiteRT-LM 0.11.0 has known SIGSEGVs on the GPU/NNAPI backend during
         // inference on Pixel Tensor-G). If we detect one, force the runtime to

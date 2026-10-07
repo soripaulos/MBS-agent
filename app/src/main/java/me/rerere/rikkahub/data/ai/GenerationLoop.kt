@@ -1343,7 +1343,10 @@ class GenerationLoop(
         workspaceCwd: String? = null,
         workspaceAgentPrompt: String? = null,
     ) {
-        val internalMessages = buildList {
+        // Labelled system-prompt parts, captured for the context breakdown below.
+        val diagnosticSystemParts = mutableListOf<Pair<String, String>>()
+        val diagnosticToolPrompts = mutableListOf<Pair<String, String>>()
+        val preTransformMessages = buildList {
             // Conversation-level system prompt override (upstream): when the assistant
             // allows it and the conversation supplies one, it replaces the assistant prompt.
             val baseSystemPrompt =
@@ -1381,6 +1384,16 @@ class GenerationLoop(
                 buildRecentChatsPrompt(assistant, conversationRepo)
             } else ""
             val toolPrompts = tools.map { tool -> tool.systemPrompt(model, messages) }
+            diagnosticSystemParts += listOf(
+                "Smart-mode policy" to (if (assistant.smartModeEnabled) SMART_MODE_PROMPT else ""),
+                "Assistant prompt" to baseSystemPrompt.orEmpty(),
+                "Plan mode" to (if (assistant.planModeEnabled) PLAN_MODE_PROMPT else ""),
+                "AGENT.md" to workspaceAgentPrompt.orEmpty(),
+                "Memories" to memoryPrompt,
+                "Recent chats" to recentChatsPrompt,
+                "Per-turn notes" to systemAddendum.orEmpty(),
+            )
+            tools.forEachIndexed { i, tool -> diagnosticToolPrompts += tool.name to toolPrompts[i] }
             // Split into stable (assistant + tools) and volatile (memory + recent chats +
             // addendum) so prompt caching survives memory injection: the stable part is the
             // cached prefix, the volatile part sits after it. See SystemPromptBuilder.
@@ -1410,7 +1423,8 @@ class GenerationLoop(
                     .ageOldToolImages()
                     .compactOldToolText()
             )
-        }.transforms(
+        }
+        val internalMessages = preTransformMessages.transforms(
             transformers = transformers,
             context = context,
             model = model,
@@ -1421,6 +1435,21 @@ class GenerationLoop(
             processingStatus = processingStatus,
             workspaceCwd = workspaceCwd,
         )
+
+        // Where this request's tokens come from (Settings-free, local estimate). Never allowed
+        // to affect the request itself.
+        val contextReport = runCatching {
+            ContextDiagnostics.analyze(
+                conversationId = conversationId,
+                modelName = model.displayName.ifBlank { model.modelId },
+                contextLength = model.contextLength,
+                systemParts = diagnosticSystemParts,
+                toolPrompts = diagnosticToolPrompts,
+                tools = tools,
+                preTransformMessages = preTransformMessages,
+                finalMessages = internalMessages,
+            )
+        }.onFailure { Log.w(TAG, "context diagnostics failed", it) }.getOrNull()
 
         var messages: List<UIMessage> = messages
         val params = TextGenerationParams(
@@ -1543,6 +1572,13 @@ class GenerationLoop(
             }
         } finally {
             processingStatus.value = null
+            // Recorded even when the request failed: "context too long" is exactly when the
+            // breakdown is needed.
+            contextReport?.let { report ->
+                ContextDiagnostics.record(
+                    report.copy(responseMessageId = messages.lastOrNull()?.takeIf { it.role == MessageRole.ASSISTANT }?.id)
+                )
+            }
         }
     }
 

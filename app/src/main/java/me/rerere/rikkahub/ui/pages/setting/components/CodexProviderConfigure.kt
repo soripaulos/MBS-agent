@@ -117,6 +117,29 @@ fun CodexProviderConfigure(
         // Models are pulled once at sign-in; this re-pulls them without a re-login, which
         // matters when ChatGPT adds a model to the account or when an earlier pull was
         // filtered down to a single entry.
+        var autoSync by remember { mutableStateOf(me.rerere.rikkahub.data.codex.CodexModelSync.isAutoSyncEnabled(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.codex_auto_sync), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.codex_auto_sync_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = autoSync,
+                onCheckedChange = {
+                    autoSync = it
+                    me.rerere.rikkahub.data.codex.CodexModelSync.setAutoSyncEnabled(context, it)
+                },
+            )
+        }
+
         OutlinedButton(
             onClick = {
                 syncingModels = true
@@ -124,9 +147,14 @@ fun CodexProviderConfigure(
                     runCatching {
                         providerManager.getProviderByType(provider).listModels(provider)
                     }.onSuccess { models ->
-                        onEdit(provider.copy(models = mergeCodexModels(provider.models, models)))
+                        val (merged, report) = me.rerere.rikkahub.data.codex.CodexModelSync.merge(provider.models, models)
+                        if (models.isNotEmpty()) onEdit(provider.copy(models = merged))
                         toaster.show(
-                            context.getString(R.string.codex_models_synced, models.size),
+                            listOfNotNull(
+                                context.getString(R.string.codex_models_synced, models.size),
+                                report.added.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "+"),
+                                report.retired.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "retired: "),
+                            ).joinToString(" · "),
                             type = ToastType.Success,
                         )
                     }.onFailure { error ->
@@ -240,20 +268,9 @@ fun CodexProviderConfigure(
     }
 }
 
-internal fun mergeCodexModels(existing: List<Model>, refreshed: List<Model>): List<Model> {
-    val refreshedByModelId = refreshed.associateBy(Model::modelId)
-    val merged = existing.map { model ->
-        refreshedByModelId[model.modelId]?.let { refreshedModel ->
-            model.copy(
-                inputModalities = refreshedModel.inputModalities,
-                outputModalities = refreshedModel.outputModalities,
-                abilities = refreshedModel.abilities,
-            )
-        } ?: model
-    }
-    val existingModelIds = existing.mapTo(mutableSetOf(), Model::modelId)
-    return merged + refreshed.filterNot { it.modelId in existingModelIds }
-}
+internal fun mergeCodexModels(existing: List<Model>, refreshed: List<Model>): List<Model> =
+    if (refreshed.isEmpty()) existing
+    else me.rerere.rikkahub.data.codex.CodexModelSync.merge(existing, refreshed).first
 
 @Composable
 private fun CodexAccountCard(

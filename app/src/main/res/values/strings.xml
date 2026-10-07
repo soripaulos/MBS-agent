@@ -1944,6 +1944,8 @@
   <string name="codex_reasoning_auto_unsupported">Codex does not support automatic reasoning effort. Select Low, Medium, High, or Extra High.</string>
   <string name="codex_response_failed">The Codex response failed.</string>
   <string name="codex_monthly_limit">Monthly limit</string>
+  <string name="codex_auto_sync">Auto-add new models</string>
+  <string name="codex_auto_sync_desc">Checks your ChatGPT plan\'s model catalog on start and twice a day. New models are added; ones OpenAI stops offering are marked (retired).</string>
   <string name="codex_sync_models">Sync models from ChatGPT</string>
   <string name="codex_models_synced">%1$d model(s) available from your ChatGPT account</string>
   <string name="codex_models_sync_failed">Could not load models from ChatGPT</string>
@@ -2698,4 +2700,8 @@
   <string name="jev_log_desc">What Jev decided this session (newest first)</string>
   <string name="jev_log_clear">Clear</string>
   <string name="jev_log_empty">Nothing yet. Decisions appear here as Jev is used.</string>
+  <string name="context_breakdown_title">Where the tokens come from</string>
+  <string name="context_breakdown_missing">No breakdown was recorded for this reply. Breakdowns are kept for replies generated since the app was last opened.</string>
+  <string name="context_breakdown_summary">≈%1$s tokens sent to %2$s with %3$d tools</string>
+  <string name="context_breakdown_note">Local estimate (≈3 characters per token), so it differs a little from the provider\'s count; the proportions are what matter.</string>
 </resources>

@@ -13,6 +13,9 @@ import me.rerere.document.PptxParser
 import java.io.File
 
 object DocumentAsPromptTransformer : InputMessageTransformer {
+    /** ≈30k tokens: generous for a normal document, bounded for a book. */
+    internal const val MAX_INLINE_CHARS = 90_000
+
     override suspend fun transform(
         ctx: TransformerContext,
         messages: List<UIMessage>,
@@ -24,9 +27,20 @@ object DocumentAsPromptTransformer : InputMessageTransformer {
                         val documents = filterIsInstance<UIMessagePart.Document>()
                         if (documents.isNotEmpty()) {
                             documents.forEach { document ->
-                                val content = readDocumentContent(document)
+                                val fullContent = readDocumentContent(document)
                                 val path = resolveWorkspacePath(document.url)
                                 val pathAttr = path?.let { " path=\"$it\"" } ?: ""
+                                // An attachment is re-sent on EVERY later turn, so a whole book
+                                // used to cost 100k+ tokens per message. Inline the start and
+                                // tell the model how to read the rest instead.
+                                val content = if (fullContent.length > MAX_INLINE_CHARS) {
+                                    fullContent.take(MAX_INLINE_CHARS) +
+                                        "\n\n[Truncated: showing the first $MAX_INLINE_CHARS of ${fullContent.length} characters. " +
+                                        (if (path != null) "The full file is at $path; read the parts you need with the workspace/file tools. " else "") +
+                                        "Ask the user for a specific section if you need more.]"
+                                } else {
+                                    fullContent
+                                }
                                 val prompt = """
                                   <UploadFile name="${document.fileName}"$pathAttr>
                                   ```

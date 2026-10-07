@@ -98,6 +98,15 @@ class CodexProvider(
         val reasoningLevels = (
             this["supported_reasoning_levels"] ?: this["supported_reasoning_efforts"]
             )?.jsonArray
+        // Remember which efforts this model accepts so requests can be clamped to them (GPT-6.1
+        // Sol rejects "none"; Luna stops at "max"; older models stop at "xhigh").
+        reasoningLevels
+            ?.mapNotNull { level ->
+                (level as? JsonObject)?.get("effort")?.jsonPrimitive?.contentOrNull
+                    ?: (level as? JsonPrimitive)?.contentOrNull
+            }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { supportedEfforts[slug] = it }
         return Model(
             modelId = slug,
             displayName = this["display_name"]?.jsonPrimitive?.contentOrNull ?: slug,
@@ -126,6 +135,7 @@ class CodexProvider(
         params: TextGenerationParams,
     ): TextGenerationResult {
         val account = repository.acquireAccount()
+        ensureEffortCatalog(providerSetting, params.model.modelId)
         return responseApiFor(account).generateText(
             providerSetting = syntheticSetting(providerSetting, account),
             messages = withDefaultInstructions(messages),
@@ -139,6 +149,7 @@ class CodexProvider(
         params: TextGenerationParams,
     ): Flow<StreamChunk> {
         val account = repository.acquireAccount()
+        ensureEffortCatalog(providerSetting, params.model.modelId)
         return responseApiFor(account).streamText(
             providerSetting = syntheticSetting(providerSetting, account),
             messages = withDefaultInstructions(messages),
@@ -151,6 +162,23 @@ class CodexProvider(
         params: ImageGenerationParams,
     ): Flow<ImageGenerationItem> {
         error("Image generation is not supported by the Codex provider")
+    }
+
+    /** model slug -> efforts the backend accepts for it, filled from the /models catalog. */
+    private val supportedEfforts = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+
+    @Volatile
+    private var catalogAttempted = false
+
+    /**
+     * Loads the catalog once per process so the first request already knows the model's
+     * effort range. Best effort: a slow or failing /models never delays the reply by more
+     * than a few seconds and never fails it.
+     */
+    private suspend fun ensureEffortCatalog(providerSetting: ProviderSetting.Codex, slug: String) {
+        if (catalogAttempted || supportedEfforts.containsKey(slug)) return
+        catalogAttempted = true
+        runCatching { kotlinx.coroutines.withTimeoutOrNull(4_000) { listModels(providerSetting) } }
     }
 
     private fun Request.Builder.codexHeaders(account: CodexAccount): Request.Builder {
@@ -192,6 +220,7 @@ class CodexProvider(
         val reasoningEffort = params.model.abilities
             .takeIf { it.contains(ModelAbility.REASONING) }
             ?.let { codexReasoningEffort(params.reasoningLevel) }
+            ?.let { clampCodexEffort(it, supportedEfforts[params.model.modelId]) }
         return params.copy(
             customHeaders = params.customHeaders + buildList {
                 add(CustomHeader("ChatGPT-Account-Id", account.chatgptAccountId))
@@ -252,7 +281,11 @@ class CodexProvider(
 
     private companion object {
         const val CODEX_API_BASE = "${CodexAccountRepository.CODEX_BASE_URL}/codex"
-        const val CLIENT_VERSION = "0.144.5"
+        // Tracks the Codex CLI release line. The backend gates newer models (GPT-6 Sol/Luna,
+        // GPT-6.1 Sol, Astra) on a minimal client version advertised here and in the UA, so an
+        // old value hides them from /models and 404s them on /responses. Bump with each Codex
+        // CLI release that adds models.
+        const val CLIENT_VERSION = "0.160.1"
 
         // The Codex backend routes newer models (e.g. gpt-5.6-luna, which is gated on
         // minimal_client_version 0.144.0) by the codex version advertised in the User-Agent, not
@@ -279,10 +312,28 @@ internal fun codexReasoningEffort(level: ReasoningLevel): String? {
         ReasoningLevel.MEDIUM -> "medium"
         ReasoningLevel.HIGH -> "high"
         ReasoningLevel.XHIGH -> "xhigh"
-        // Codex's API tops out at "xhigh"; mirror XHIGH rather than sending an effort it doesn't know.
-        ReasoningLevel.MAX -> "xhigh"
+        // GPT-6 era models accept "max"; clampCodexEffort lowers it to "xhigh" on older ones.
+        ReasoningLevel.MAX -> "max"
         ReasoningLevel.OFF -> "none"
     }
+}
+
+private val CODEX_EFFORT_ORDER = listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+/**
+ * Fits [requested] into the efforts a model accepts. Unknown model (no catalog entry):
+ * keep everything the older models accepted and lower "max" to "xhigh". Known model:
+ * use the request if supported, else the nearest supported level (ties go lower, so a
+ * cost-saving "off" becomes the cheapest available effort rather than a pricier one).
+ */
+internal fun clampCodexEffort(requested: String, supported: List<String>?): String {
+    if (supported.isNullOrEmpty()) return if (requested == "max") "xhigh" else requested
+    if (requested in supported) return requested
+    val want = CODEX_EFFORT_ORDER.indexOf(requested).takeIf { it >= 0 } ?: return requested
+    return supported
+        .filter { it in CODEX_EFFORT_ORDER }
+        .minWithOrNull(compareBy<String>({ kotlin.math.abs(CODEX_EFFORT_ORDER.indexOf(it) - want) }, { CODEX_EFFORT_ORDER.indexOf(it) }))
+        ?: requested
 }
 
 internal fun parseCodexIncompleteMessage(payload: JsonObject): String {

@@ -123,7 +123,7 @@ object ContextBudgetPlanner {
     }
 
     @Suppress("DEPRECATION")
-    private fun estimatePartTokens(part: UIMessagePart): Long = when (part) {
+    internal fun estimatePartTokens(part: UIMessagePart): Long = when (part) {
         is UIMessagePart.Text -> estimateTextTokens(part.text)
         is UIMessagePart.Reasoning -> estimateTextTokens(part.reasoning)
         is UIMessagePart.Tool -> estimateTextTokens(part.toolName) +
@@ -141,7 +141,7 @@ object ContextBudgetPlanner {
             -> MEDIA_PART_TOKENS.toLong()
     }
 
-    private fun estimateTextTokens(text: String): Long {
+    internal fun estimateTextTokens(text: String): Long {
         var asciiChars = 0L
         var nonAsciiChars = 0L
         text.forEach { char ->

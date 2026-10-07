@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.message
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,10 @@ import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,6 +47,14 @@ fun ChatMessageNerdLine(
     color: Color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
 ) {
     val settings = LocalSettings.current.displaySetting
+    // Tap the input-token count to see what the request was made of.
+    var showContextBreakdown by remember { mutableStateOf(false) }
+    if (showContextBreakdown) {
+        ContextBreakdownSheet(
+            report = remember(message.id) { me.rerere.rikkahub.data.ai.ContextDiagnostics.forMessage(message.id) },
+            onDismiss = { showContextBreakdown = false },
+        )
+    }
 
     ProvideTextStyle(MaterialTheme.typography.labelSmall.copy(color = color)) {
         CompositionLocalProvider(LocalContentColor provides color) {
@@ -52,8 +65,9 @@ fun ChatMessageNerdLine(
             ) {
                 val usage = message.usage
                 if (settings.showTokenUsage && usage != null) {
-                    // Input tokens
+                    // Input tokens (tap: context breakdown)
                     StatsItem(
+                        modifier = Modifier.clickable { showContextBreakdown = true },
                         icon = {
                             Icon(
                                 imageVector = HugeIcons.Upload02,
@@ -169,9 +183,11 @@ internal fun formatCost(cost: Double): String {
 @Composable
 fun StatsItem(
     icon: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(1.dp),
     ) {

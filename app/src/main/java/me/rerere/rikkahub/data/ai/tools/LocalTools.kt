@@ -1080,6 +1080,7 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.AgentConfig)) {
             tools.addAll(createAgentConfigTools(settingsStore, invocationContext))
+            tools.add(contextReportTool(invocationContext))
         }
         if (options.contains(LocalToolOption.AppDocs)) {
             tools.add(createAppDocsTool(context))
@@ -1229,3 +1230,27 @@ class LocalTools(
         }
     }
 }
+
+/**
+ * Lets the agent see what its own context is made of (and explain a bloated chat to the user).
+ * Reads the breakdown recorded for this conversation's latest request.
+ */
+private fun contextReportTool(invocationContext: ToolInvocationContext): Tool = Tool(
+    name = "context_report",
+    description = "Show what this chat's last request to the model was made of: system prompt parts, " +
+        "tool definitions (per MCP server), memories, attached files, tool results and history, with " +
+        "estimated tokens and findings. Use when the user asks why the context or token usage is high, " +
+        "or before deciding what to trim.",
+    parameters = { me.rerere.ai.core.InputSchema.Obj(properties = kotlinx.serialization.json.buildJsonObject { }) },
+    execute = {
+        val conversationId = invocationContext.callerConversationId
+            ?.let { runCatching { kotlin.uuid.Uuid.parse(it) }.getOrNull() }
+        val report = me.rerere.rikkahub.data.ai.ContextDiagnostics.latest(conversationId)
+        listOf(
+            me.rerere.ai.ui.UIMessagePart.Text(
+                report?.let { me.rerere.rikkahub.data.ai.ContextDiagnostics.render(it) }
+                    ?: "No request has been recorded for this chat yet in this app session."
+            )
+        )
+    },
+)
