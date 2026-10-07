@@ -509,6 +509,10 @@ class RouteActivity : ComponentActivity() {
                                 SettingSubAgentsPage()
                             }
 
+                            entry<Screen.SettingTelegramAccount> {
+                                me.rerere.rikkahub.ui.pages.setting.SettingTelegramAccountPage()
+                            }
+
                             entry<Screen.SettingJev> {
                                 me.rerere.rikkahub.ui.pages.setting.SettingJevPage()
                             }
@@ -806,6 +810,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingJev : Screen
+
+    @Serializable
+    data object SettingTelegramAccount : Screen
 
     @Serializable
     data object SettingDonate : Screen

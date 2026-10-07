@@ -296,6 +296,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         headlineContent = { Text(stringResource(R.string.setting_page_telegram)) },
                     )
                     item(
+                        onClick = { navController.navigate(Screen.SettingTelegramAccount) },
+                        leadingContent = { Icon(HugeIcons.Telegram, null) },
+                        supportingContent = { Text(stringResource(R.string.tg_account_entry_desc)) },
+                        headlineContent = { Text(stringResource(R.string.tg_account_title)) },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.SettingWorkflows) },
                         leadingContent = { Icon(HugeIcons.Connect, null) },
                         supportingContent = { Text(stringResource(R.string.setting_page_workflows_desc)) },

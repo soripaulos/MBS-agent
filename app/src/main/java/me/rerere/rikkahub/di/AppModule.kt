@@ -54,6 +54,8 @@ val appModule = module {
     single { me.rerere.rikkahub.jev.JevPreferences(get()) }
     single { me.rerere.rikkahub.jev.JevClient(get()) }
     single { me.rerere.rikkahub.jev.JevService(get(), get()) }
+    // Telegram user-account client (TDLib), distinct from the bot integration.
+    single { me.rerere.rikkahub.data.telegram.account.TelegramAccountClient(get()) }
     single { me.rerere.rikkahub.data.preferences.TermuxPreferences(get()) }
     // Pass 3: Telegram-bound screenshot streamer for headless browser mode. Bound to the
     // [BrowserScreenshotStreamer] interface so [BrowserController.streamScreenshotIfHeadless]

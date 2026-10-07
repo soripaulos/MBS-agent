@@ -2713,4 +2713,25 @@
   <string name="tool_loading_aggressive">Minimal (load on demand)</string>
   <string name="setting_browser_background">Run in background</string>
   <string name="setting_browser_background_desc">The agent browses in a hidden browser instead of opening the browser screen over your chat or other apps. Faster to start; turn off to watch it work.</string>
+  <string name="tg_account_title">Telegram account</string>
+  <string name="tg_account_entry_desc">Let the agent use your own Telegram account (read chats, search, send) - not the bot</string>
+  <string name="tg_account_intro">Connects the agent to your personal Telegram account, natively (TDLib, Telegram\'s official client library); no MCP server or Termux setup. Telegram requires every third-party client to have its own API id and hash: create them once at my.telegram.org → API development tools. The agent gets tg_ tools (list chats, read, search, send message/file, mark read) whenever the assistant has the Telegram tool group on; sending always asks for your approval. Your session stays on this device.</string>
+  <string name="tg_account_connected">Connected as %1$s</string>
+  <string name="tg_account_unavailable">Not available in this build: %1$s</string>
+  <string name="tg_account_status">Status: %1$s</string>
+  <string name="tg_account_api_id">API id (my.telegram.org)</string>
+  <string name="tg_account_api_hash">API hash</string>
+  <string name="tg_account_connect">Connect</string>
+  <string name="tg_account_wait">Working…</string>
+  <string name="tg_account_phone">Phone number (international, e.g. +251…)</string>
+  <string name="tg_account_next">Next</string>
+  <string name="tg_account_code_sent">Code sent via %1$s to %2$s</string>
+  <string name="tg_account_code">Login code</string>
+  <string name="tg_account_password_hint">Hint: %1$s</string>
+  <string name="tg_account_password">Two-step verification password</string>
+  <string name="tg_account_email">Email address</string>
+  <string name="tg_account_first_name">First name</string>
+  <string name="tg_account_last_name">Last name</string>
+  <string name="tg_account_ready_hint">The agent can use this account through the tg_ tools (turn on the Telegram tool group for the assistant).</string>
+  <string name="tg_account_logout">Log out</string>
 </resources>

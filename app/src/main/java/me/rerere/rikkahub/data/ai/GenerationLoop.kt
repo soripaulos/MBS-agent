@@ -621,7 +621,9 @@ class GenerationLoop(
                         },
                         onDelete = { id ->
                             memoryRepo.deleteMemory(id)
-                        }
+                        },
+                        onSearch = { query -> memoryRepo.search(memoryAssistantId, query) },
+                        onPin = { id, pinned -> memoryRepo.metaStore?.setPinned(id, pinned) },
                     ).let(this::addAll)
                 }
                 addAll(tools)
@@ -1407,7 +1409,17 @@ class GenerationLoop(
                 }
             }
             val memoryPrompt = if (assistant.enableMemory) {
-                buildMemoryPrompt(memories = memories)
+                // Core memory (profile / preferences / pinned) always; notes ranked against the
+                // latest user message and capped, the rest one memory_tool search away.
+                val meta = memoryRepo.metaStore?.all().orEmpty()
+                val query = messages.lastOrNull { it.role == MessageRole.USER }?.toText()
+                val selection = me.rerere.rikkahub.data.repository.MemoryRetrieval.select(memories, query, meta)
+                memoryRepo.metaStore?.touchUsed(selection.notes.map { it.id })
+                buildMemoryPrompt(
+                    memories = selection.core + selection.notes,
+                    hiddenNotes = selection.hiddenNotes,
+                    meta = meta,
+                )
             } else ""
             val recentChatsPrompt = if (assistant.enableRecentChatsReference) {
                 buildRecentChatsPrompt(assistant, conversationRepo)

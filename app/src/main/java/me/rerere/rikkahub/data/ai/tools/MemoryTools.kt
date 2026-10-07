@@ -21,13 +21,20 @@ fun buildMemoryTools(
     json: Json,
     onCreation: suspend (String) -> AssistantMemory,
     onUpdate: suspend (Int, String) -> AssistantMemory,
-    onDelete: suspend (Int) -> Unit
+    onDelete: suspend (Int) -> Unit,
+    // Archival lookup over every record (not just the ones injected this turn).
+    onSearch: (suspend (String) -> List<AssistantMemory>)? = null,
+    // Pin = always keep in context (core memory).
+    onPin: (suspend (Int, Boolean) -> Unit)? = null,
 ): List<Tool> = listOf(
     Tool(
         name = "memory_tool",
         description = """
             The memory tool stores long-term information across conversations.
-            Use `action` to control the operation: `create` (add), `edit` (update), `delete` (remove).
+            Use `action` to control the operation: `create` (add), `edit` (update), `delete` (remove),
+            `search` (find stored notes by `query` - only the most relevant notes are shown each turn),
+            `pin` / `unpin` (`id`: keep a note in every conversation's context).
+            Creating a record that restates an existing one updates that record instead.
             - No relevant record: `create` + `content`
             - Existing relevant record: `edit` + `id` + `content`
             - Outdated/irrelevant record: `delete` + `id`
@@ -57,9 +64,11 @@ fun buildMemoryTools(
                                 add("create")
                                 add("edit")
                                 add("delete")
+                                if (onSearch != null) add("search")
+                                if (onPin != null) { add("pin"); add("unpin") }
                             }
                         )
-                        put("description", "Operation to perform: create, edit, or delete")
+                        put("description", "Operation to perform")
                     })
                     put("id", buildJsonObject {
                         put("type", "integer")
@@ -68,6 +77,10 @@ fun buildMemoryTools(
                     put("content", buildJsonObject {
                         put("type", "string")
                         put("description", "The content of the memory record (required for create/edit)")
+                    })
+                    if (onSearch != null) put("query", buildJsonObject {
+                        put("type", "string")
+                        put("description", "What to look for (search)")
                     })
                     put("kind", buildJsonObject {
                         put("type", "string")
@@ -117,7 +130,28 @@ fun buildMemoryTools(
                     }
                 }
 
-                else -> error("unknown action: $action, must be one of [create, edit, delete]")
+                "search" -> {
+                    val search = onSearch ?: error("search is not available")
+                    val query = params["query"]?.jsonPrimitive?.contentOrNull
+                        ?: params["content"]?.jsonPrimitive?.contentOrNull
+                        ?: error("query is required")
+                    buildJsonObject {
+                        put("results", buildJsonArray {
+                            search(query).forEach { m ->
+                                add(buildJsonObject { put("id", m.id); put("content", m.content) })
+                            }
+                        })
+                    }
+                }
+
+                "pin", "unpin" -> {
+                    val pin = onPin ?: error("pinning is not available")
+                    val id = params["id"]?.jsonPrimitive?.intOrNull ?: error("id is required")
+                    pin(id, action == "pin")
+                    buildJsonObject { put("success", true); put("id", id); put("pinned", action == "pin") }
+                }
+
+                else -> error("unknown action: $action, must be one of [create, edit, delete, search, pin, unpin]")
             }
             listOf(UIMessagePart.Text(payload.toString()))
         }

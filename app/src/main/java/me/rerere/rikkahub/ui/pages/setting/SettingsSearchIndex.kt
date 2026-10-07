@@ -87,6 +87,12 @@ fun settingsSearchIndex(developerMode: Boolean): List<SettingsSearchEntry> {
             route = Screen.SettingJev,
         ),
         SettingsSearchEntry(
+            titleRes = R.string.tg_account_title,
+            descriptionRes = R.string.tg_account_entry_desc,
+            groupRes = R.string.setting_page_model_and_services,
+            route = Screen.SettingTelegramAccount,
+        ),
+        SettingsSearchEntry(
             titleRes = R.string.setting_page_web_server,
             descriptionRes = R.string.setting_page_web_server_desc,
             groupRes = R.string.setting_page_model_and_services,

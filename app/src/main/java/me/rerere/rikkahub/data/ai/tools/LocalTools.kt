@@ -961,6 +961,15 @@ class LocalTools(
             tools.add(telegramSetCommandsTool(telegramBotPreferences, telegramBotClient))
             tools.add(telegramGetCommandsTool(telegramBotClient))
             tools.add(telegramDeleteCommandsTool(telegramBotPreferences, telegramBotClient))
+            // The user's own Telegram account (TDLib), when logged in under
+            // Settings → Telegram account. Same toggle as the bot: "Telegram".
+            val tgAccount = runCatching {
+                org.koin.core.context.GlobalContext.get()
+                    .get<me.rerere.rikkahub.data.telegram.account.TelegramAccountClient>()
+            }.getOrNull()
+            if (tgAccount?.isReady == true) {
+                tools.addAll(me.rerere.rikkahub.data.telegram.account.createTelegramAccountTools(tgAccount))
+            }
         }
         if (options.contains(LocalToolOption.CronJobs)) {
             tools.add(me.rerere.rikkahub.data.ai.tools.local.scheduleJobTool(scheduledJobRepository, cronJobScheduler, settingsStore,

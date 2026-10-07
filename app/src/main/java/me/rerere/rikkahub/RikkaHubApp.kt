@@ -184,6 +184,13 @@ class RikkaHubApp : Application() {
         runCatching {
             me.rerere.rikkahub.data.codex.CodexModelSync.schedule(this)
         }.onFailure { Log.w(TAG, "failed to schedule CodexModelSync", it) }
+        // Resume a logged-in Telegram account session (TDLib) so the agent's tg_ tools work
+        // without visiting Settings first.
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                get<me.rerere.rikkahub.data.telegram.account.TelegramAccountClient>().startIfConfigured()
+            }.onFailure { Log.w(TAG, "Telegram account resume failed", it) }
+        }
         get<AppScope>().launch(Dispatchers.IO) {
             kotlinx.coroutines.delay(20_000)
             runCatching {

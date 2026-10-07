@@ -17,12 +17,16 @@ import me.rerere.rikkahub.utils.toLocalDate
  */
 private val MEMORY_KIND_TAG = Regex("""^\[(profile|preference)]\s*""")
 
-internal fun buildMemoryPrompt(memories: List<AssistantMemory>) =
+internal fun buildMemoryPrompt(
+    memories: List<AssistantMemory>,
+    hiddenNotes: Int = 0,
+    meta: Map<Int, me.rerere.rikkahub.data.repository.MemoryMeta> = emptyMap(),
+) =
     buildString {
         appendLine()
         append("**Memories**")
         appendLine()
-        append("These are memories stored via the memory_tool that you can reference in future conversations.")
+        append("These are memories stored via the memory_tool that you can reference in future conversations. Format: #id content (date last updated).")
         appendLine()
         val profile = mutableListOf<AssistantMemory>()
         val preferences = mutableListOf<AssistantMemory>()
@@ -34,32 +38,34 @@ internal fun buildMemoryPrompt(memories: List<AssistantMemory>) =
                 else -> notes.add(memory)
             }
         }
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
 
+        // One line per record: ~40% fewer tokens than the pretty-printed JSON this replaced.
         fun appendGroup(label: String, group: List<AssistantMemory>) {
             if (group.isEmpty()) return
             appendLine("$label:")
-            val json = buildJsonArray {
-                group.forEach { memory ->
-                    add(buildJsonObject {
-                        put("id", memory.id)
-                        put("content", memory.content.replace(MEMORY_KIND_TAG, ""))
-                    })
-                }
+            group.forEach { memory ->
+                append("#").append(memory.id).append(' ')
+                append(memory.content.replace(MEMORY_KIND_TAG, "").replace('\n', ' ').trim())
+                val updated = meta[memory.id]?.updatedAt ?: 0L
+                if (updated > 0) append(" (").append(dateFormat.format(java.util.Date(updated))).append(')')
+                if (meta[memory.id]?.pinned == true) append(" [pinned]")
+                appendLine()
             }
-            append(JsonInstantPretty.encodeToString(json))
-            appendLine()
         }
         appendGroup("User profile", profile)
         appendGroup("Preferences", preferences)
-        appendGroup("Notes", notes)
+        appendGroup(if (hiddenNotes > 0) "Notes (most relevant to this message)" else "Notes", notes)
+        if (hiddenNotes > 0) {
+            appendLine("$hiddenNotes more notes are stored but not shown; use memory_tool search with a query to look them up before saying you don't know something about the user.")
+        }
 
         // Curation nudge — the "closed learning loop": once the store grows past a point
-        // where stale/duplicate records start costing tokens every single turn, tell the
-        // model to garden it. Threshold is deliberately generous; the nudge itself is one
-        // sentence so it never costs more than the mess it prevents.
-        if (memories.size >= 30) {
+        // where stale/duplicate records start costing tokens, tell the model to garden it.
+        val total = memories.size + hiddenNotes
+        if (total >= 40) {
             appendLine(
-                "Memory curation: there are ${memories.size} stored memories. When convenient, " +
+                "Memory curation: there are $total stored memories. When convenient, " +
                     "use memory_tool edit/delete to merge duplicates and remove outdated records."
             )
         }

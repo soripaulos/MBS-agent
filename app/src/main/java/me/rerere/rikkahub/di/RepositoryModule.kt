@@ -28,7 +28,7 @@ val repositoryModule = module {
     }
 
     single {
-        MemoryRepository(get())
+        MemoryRepository(get(), me.rerere.rikkahub.data.repository.MemoryMetaStore(get()))
     }
 
     single {

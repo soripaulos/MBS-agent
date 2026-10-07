@@ -162,6 +162,12 @@ account, and that's it — no API key anywhere.
   the catalog doesn't advertise.
 - Which models you get is decided by ChatGPT, not the app: the account's Codex catalog is
   listed as-is, minus entries the backend marks as hidden or retired.
+- **Auto-add new models** (on by default) re-checks the catalog on start and twice a day.
+  New models, such as GPT-6 Sol/Luna, GPT-6.1 Sol and Astra, appear on their own. Models
+  OpenAI stops offering (GPT-5.5 retires Oct 14, 2026) are marked "(retired)", not deleted,
+  so you can switch your assistants over.
+- The reasoning level is matched to what each model supports. For example, "Off" on GPT-6.1
+  Sol, which has no "none" setting, becomes its lowest effort.
 
 Use this when you want your existing subscription to do the work; keep an API-key OpenAI
 provider alongside it if you also need pay-as-you-go access or models the Codex backend
@@ -421,6 +427,84 @@ excerpted mid-turn, and the stable part of the system prompt is kept byte-identi
 providers can cache it. If a single task still balloons: delegate the noisy part to a
 sub-agent (clean context) or to Kimi, and keep the assistant's enabled-tool list lean —
 every enabled tool category adds its schema to every request.
+
+## 16b. Why is my chat so big? (context breakdown)
+
+Tap the **input-token count** under any reply to see what that request was made of:
+- **System prompt:** smart mode, the assistant prompt, AGENT.md, memories, recent chats and
+  per-tool instructions.
+- **Tool definitions:** grouped per MCP server and tool family.
+- **Conversation history:** your text, replies, reasoning and media.
+- **Attached files:** each file and its size.
+- **Tool results:** accumulated per tool.
+- **Prompt shaping:** lorebooks and mode injections.
+
+Findings at the top name the biggest offenders, e.g. "MCP · frappe adds 18k tokens to every
+request" or "book.pdf is 95k tokens and is re-sent every turn". The agent can see the same
+breakdown with the `context_report` tool (self-configuration group).
+
+Common causes of chats that start at 100–200k tokens, and the fix for each:
+- **Big attachments.** These are re-sent on every turn. Files are now inlined up to ~90k
+  characters, and the agent is told the path for the rest.
+- **Tool definitions.** Turn on **deferred tool loading** (below).
+- **A large skill library.** Turn on Jev's **Only describe relevant skills**.
+- **Long tool-heavy chats.** Compact, or start a new chat.
+
+## 16c. Deferred tool loading (tool_search)
+
+Settings → Tool approvals → **Tool loading**. Every enabled tool's full JSON definition is
+normally sent with every message.
+- **Auto** (the default): once definitions pass ~8k tokens, MCP tools and then the largest
+  local tools are replaced by a short name list plus one `tool_search` tool. The agent
+  searches by intent ("send a Telegram message") and the matches are loaded for the rest of
+  the chat.
+- **Minimal:** loads only core tools up front.
+- **Load all:** the old behaviour.
+
+Tools already used in a chat stay loaded. With Jev on, the tools your message needs are
+pre-loaded before the first step, so most turns need no search at all.
+
+## 16d. Faster browser and phone use
+
+- **Browser in the background** (Settings → Browser → Run in background, on by default). The
+  agent browses in a hidden browser instead of opening the browser screen over your chat or
+  other apps. Turn it off to watch.
+- **Faster page reads.** Pages count as loaded once their content is usable, not after every
+  ad script finishes.
+- **Page snapshots.** `browser_open` / `browser_act` return a compact text snapshot of the
+  page: the readable text plus numbered buttons, links and fields. `browser_act` clicks,
+  types, submits or selects by number, or by description using Jev, and returns the next
+  snapshot in the same call. One round trip per step, no screenshots needed.
+- **Phone use works the same way.** `screen_snapshot` gives a numbered text view of the
+  screen. `screen_act` taps, long-presses, types or scrolls by number or description, and
+  returns the next screen.
+
+## 16e. Memory that scales
+
+- **Always in context:** "profile" and "preference" memories, plus anything you pin.
+- **Notes:** ranked against your current message. Only the ~12 most relevant are shown, and
+  the rest are one `memory_tool search` away. A store of hundreds of notes costs about the
+  same per turn as a store of twenty.
+- **No duplicates:** saving something that restates an existing memory updates that memory
+  instead.
+- **Dates and pins:** memories show when they were last updated. Use `memory_tool pin` /
+  `unpin` to keep a note in every chat.
+
+## 16f. Your Telegram account (not the bot)
+
+Settings → Model & services → **Telegram account** connects the agent to your own Telegram
+account natively, using TDLib, Telegram's official client library. No MCP server or Termux
+Python setup is needed.
+
+To connect:
+1. Create an API id and hash once at my.telegram.org → API development tools. Telegram
+   requires this for every third-party client.
+2. Enter your phone number, then the login code, then your 2FA password if you have one.
+
+The agent gets `tg_list_chats`, `tg_read_messages`, `tg_search_messages`, `tg_send_message`,
+`tg_send_file`, `tg_mark_read` and `tg_account_info`. They appear when the assistant has the
+**Telegram** tool group on. Sending always asks for your approval. The session stays on
+this device; log out from the same page.
 
 ## 17. Common "how do I…"
 

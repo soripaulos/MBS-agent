@@ -53,6 +53,24 @@ jobs:
       # The debug build type uses the auto-generated debug keystore and the project does not
       # apply the google-services plugin, so no signing secrets or google-services.json are
       # required here (unlike release.yml).
+      # Telegram account integration: TDLib's prebuilt Android library with JNI bindings
+      # (up9cloud/android-libtdjson, MIT; TDLib itself is Boost-licensed). Not checked in
+      # (~20 MB per ABI); without it the feature reports itself unavailable instead of
+      # failing. Only the ABI this build packages is copied.
+      - name: Fetch TDLib (libtdjson.so)
+        continue-on-error: true
+        run: |
+          set -e
+          TD_VERSION=v1.8.65
+          mkdir -p /tmp/tdlib && cd /tmp/tdlib
+          curl -fsSL -o jniLibs.tar.gz "https://github.com/up9cloud/android-libtdjson/releases/download/${TD_VERSION}/jniLibs.tar.gz"
+          tar -xzf jniLibs.tar.gz
+          SO=$(find . -path '*arm64-v8a*' -name 'libtdjson.so' | head -n1)
+          test -n "$SO"
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
+          cp "$SO" "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/"
+          ls -la "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/"
+
       - name: Build debug APK
         run: |
           chmod +x gradlew

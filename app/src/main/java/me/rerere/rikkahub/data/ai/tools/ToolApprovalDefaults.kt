@@ -232,6 +232,9 @@ object ToolApprovalDefaults {
         "browser_act",
         // Compact-snapshot phone-use actions (tap / type / scroll by ref or intent).
         "screen_act",
+        // Telegram USER-account sends (as the user, to real people).
+        "tg_send_message",
+        "tg_send_file",
 
         // web_fetch (item 1.2) — network egress. A bare HTTP GET/POST can exfiltrate
         // anything the LLM puts in the URL / body / headers, so it gets the same
