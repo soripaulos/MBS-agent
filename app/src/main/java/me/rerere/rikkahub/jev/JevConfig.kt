@@ -97,6 +97,13 @@ data class ModelRouterConfig(
 data class SkillHintConfig(
     val enabled: Boolean = false,
     val threshold: Float = 0.70f,
+    /**
+     * Also trim the skill catalogue in the system prompt: only the [maxListed] skills Jev
+     * rates relevant keep their full description; the rest are listed by name only (still
+     * loadable with use_skill). Large skill libraries stop costing context on every turn.
+     */
+    val trimListing: Boolean = true,
+    val maxListed: Int = 5,
 )
 
 /** Jev-powered in-app browser helpers (`browser_find_element`, `browser_check`). */

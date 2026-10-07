@@ -354,6 +354,9 @@ private fun JevRouterCard(
             JevThreshold(stringResource(R.string.jev_threshold), config.skillHint.threshold) { v ->
                 update { it.copy(skillHint = it.skillHint.copy(threshold = v)) }
             }
+            JevSwitch(stringResource(R.string.jev_skill_trim), stringResource(R.string.jev_skill_trim_desc), config.skillHint.trimListing) { v ->
+                update { it.copy(skillHint = it.skillHint.copy(trimListing = v)) }
+            }
         }
     }
 }

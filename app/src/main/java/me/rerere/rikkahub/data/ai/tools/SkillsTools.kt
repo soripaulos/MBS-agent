@@ -23,6 +23,11 @@ fun createSkillTools(
      * content tool is not offered.
      */
     skillManager: SkillManager? = null,
+    /**
+     * Skills whose description is listed this turn (Jev's relevance pick). Null lists all.
+     * The others are named in one compact line and remain loadable with use_skill.
+     */
+    visibleSkills: Set<String>? = null,
 ): List<Tool> {
     val available = allSkills.filter { it.name in enabledSkills }
     if (available.isEmpty()) return emptyList()
@@ -76,8 +81,10 @@ fun createSkillTools(
                     }
 
                     // Lazy skills — listed for discovery; loaded on demand via `use_skill`.
-                    val lazy = available.filterNot { it.autoLoad }
-                    if (lazy.isNotEmpty()) {
+                    val allLazy = available.filterNot { it.autoLoad }
+                    val lazy = if (visibleSkills == null) allLazy else allLazy.filter { it.name in visibleSkills }
+                    val hidden = allLazy - lazy.toSet()
+                    if (allLazy.isNotEmpty()) {
                         appendLine("**Skills**")
                         appendLine("You have access to the following skills. Use the `use_skill` tool to load a skill's instructions when the user's request matches.")
                         appendLine("<available_skills>")
@@ -89,6 +96,10 @@ fun createSkillTools(
                         }
                         append("</available_skills>")
                         appendLine()
+                        if (hidden.isNotEmpty()) {
+                            appendLine("Other skills (judged unrelated to this message; load by name with use_skill if that changes): " +
+                                hidden.joinToString(", ") { it.name })
+                        }
                     }
                 }
             },

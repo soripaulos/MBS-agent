@@ -91,6 +91,26 @@ object BrowserController {
      * in. User-configurable via Settings → Browser (GitHub issue #4); kept in sync by
      * [BrowserPreferences]. Defaults to 30 s until the first read settles. Always clamped.
      */
+    /**
+     * Run the browser in a hidden (headless) WebView for in-app chats too, instead of
+     * launching BrowserActivity over the chat / other apps. Kept in sync by
+     * [BrowserPreferences]. Defaults to on: it is faster (no Activity launch/bind) and
+     * doesn't take over the screen.
+     */
+    @Volatile
+    var backgroundMode: Boolean = true
+
+    /**
+     * In-app chats using the background browser. Their screenshots are NOT streamed (that
+     * path exists for Telegram/cron, where the user can't see the page any other way), which
+     * also saves a full-page PNG encode after every action.
+     */
+    private val quietConversations = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun markQuiet(callerConvId: String) {
+        quietConversations += callerConvId
+    }
+
     @Volatile
     var perToolTimeoutMs: Long = BrowserToolDefaults.DEFAULT_PER_TOOL_TIMEOUT_MS
     /** Cache subdir for streamed (headless) screenshots — separate from the `browser-shots`
@@ -456,6 +476,9 @@ object BrowserController {
     /** True iff a WebView is currently bound (foreground or headless) and not GC'd. */
     fun isBound(): Boolean = activeWebView() != null
 
+    /** True only while the visible BrowserActivity is bound (not a headless session). */
+    fun isForegroundBound(): Boolean = (mode as? Mode.Foreground)?.activityRef?.get() != null
+
     /** Cheap read for tools / UI status — null when no WebView is bound. */
     fun currentUrl(): String? = activeWebView()?.url
 
@@ -583,6 +606,7 @@ object BrowserController {
     suspend fun streamScreenshotIfHeadless(actionLabel: String) {
         val m = mode
         if (m !is Mode.Headless) return
+        if (m.callerConvId in quietConversations) return
         val webView = m.webView
         val context = webView.context.applicationContext ?: return
         // Capture on the main thread (WebView APIs all require it). Read webView.url here
@@ -756,14 +780,28 @@ suspend fun WebView.evaluateJavascriptAsync(code: String, timeoutMs: Long = 8_00
  */
 suspend fun WebView.awaitReadyState(timeoutMs: Long = 8_000L): Boolean {
     val deadline = System.currentTimeMillis() + timeoutMs
+    var interactiveSince = 0L
     while (System.currentTimeMillis() < deadline) {
         val raw = evaluateJavascriptAsync("(function(){return document.readyState;})()", 1_500L)
         // evaluateJavascript wraps string returns in JSON quotes — `"complete"` comes
         // back as the 10-char literal `"\"complete\""`. Match the exact form so a page
         // that overrides document.readyState to a string merely containing "complete"
         // (e.g. "incomplete", or some adversarial value) doesn't trip the early-exit.
-        if (raw != null && raw.trim() == "\"complete\"") return true
-        kotlinx.coroutines.delay(200)
+        val state = raw?.trim()
+        if (state == "\"complete\"") return true
+        // The DOM is usable once "interactive"; pages with slow ads / trackers / long-poll
+        // scripts can take many seconds more to reach "complete" (or never do). Accept a DOM
+        // that has stayed interactive for a short grace period instead of burning the whole
+        // timeout on every navigation.
+        if (state == "\"interactive\"") {
+            if (interactiveSince == 0L) interactiveSince = System.currentTimeMillis()
+            else if (System.currentTimeMillis() - interactiveSince >= INTERACTIVE_GRACE_MS) return true
+        } else {
+            interactiveSince = 0L
+        }
+        kotlinx.coroutines.delay(150)
     }
     return false
 }
+
+private const val INTERACTIVE_GRACE_MS = 1_200L

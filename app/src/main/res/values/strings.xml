@@ -2704,4 +2704,13 @@
   <string name="context_breakdown_missing">No breakdown was recorded for this reply. Breakdowns are kept for replies generated since the app was last opened.</string>
   <string name="context_breakdown_summary">≈%1$s tokens sent to %2$s with %3$d tools</string>
   <string name="context_breakdown_note">Local estimate (≈3 characters per token), so it differs a little from the provider\'s count; the proportions are what matter.</string>
+  <string name="jev_skill_trim">Only describe relevant skills</string>
+  <string name="jev_skill_trim_desc">Each turn, only the 5 skills Jev rates relevant keep their description in the prompt; the rest are listed by name and still load on demand. Big skill libraries stop costing context every message.</string>
+  <string name="tool_loading_title">Tool loading</string>
+  <string name="tool_loading_desc">Every tool\'s full definition is normally sent with every message; MCP servers alone can add 20–40k tokens. With deferred loading, big tools are listed by name and the agent loads them with tool_search when it needs them (Jev pre-loads the likely ones). Tools already used in a chat stay loaded.</string>
+  <string name="tool_loading_off">Load all</string>
+  <string name="tool_loading_auto">Auto (defer when large)</string>
+  <string name="tool_loading_aggressive">Minimal (load on demand)</string>
+  <string name="setting_browser_background">Run in background</string>
+  <string name="setting_browser_background_desc">The agent browses in a hidden browser instead of opening the browser screen over your chat or other apps. Faster to start; turn off to watch it work.</string>
 </resources>

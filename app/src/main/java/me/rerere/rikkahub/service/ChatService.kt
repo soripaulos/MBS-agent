@@ -1831,6 +1831,7 @@ class ChatService(
                                 enabledSkills = assistant.enabledSkills,
                                 allSkills = skillManager.listSkills(),
                                 skillManager = skillManager,
+                                visibleSkills = jevPlan?.relevantSkills,
                             )
                         )
                     }

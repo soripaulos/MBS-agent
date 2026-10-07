@@ -973,6 +973,9 @@ class LocalTools(
             tools.add(me.rerere.rikkahub.data.ai.tools.local.getJobHistoryTool(scheduledJobRepository, scheduledJobRunRepository))
         }
         if (options.contains(LocalToolOption.ScreenAutomation)) {
+            // Fast path first: compact snapshot + act-and-return-next-screen.
+            tools.add(me.rerere.rikkahub.data.ai.tools.local.screenSnapshotTool(invocationContext, interactiveToolStreamer))
+            tools.add(me.rerere.rikkahub.data.ai.tools.local.screenActTool(invocationContext, interactiveToolStreamer))
             tools.add(tapTool(invocationContext, interactiveToolStreamer))
             tools.add(longPressTool(invocationContext, interactiveToolStreamer))
             tools.add(swipeTool(invocationContext, interactiveToolStreamer))
@@ -1140,6 +1143,14 @@ class LocalTools(
                     )?.let { tools.add(it) }
                 }
             }
+            // Snapshot/act pair: the fast path for browsing (text snapshot with numbered
+            // elements, act by number or intent, new snapshot back in the same call).
+            tools.add(me.rerere.rikkahub.data.ai.tools.local.browserSnapshotTool())
+            val canClick = browserPrefs[me.rerere.rikkahub.browser.BrowserToolDefaults.CLICK] == true
+            val canType = browserPrefs[me.rerere.rikkahub.browser.BrowserToolDefaults.TYPE] == true
+            if (canClick || canType) {
+                tools.add(me.rerere.rikkahub.data.ai.tools.local.browserActTool(allowClick = canClick, allowType = canType))
+            }
         }
         // web_fetch/web_extract are always-on unless disabled in Search settings, no
         // per-assistant toggle.
@@ -1201,19 +1212,13 @@ class LocalTools(
             if (jevConfig.decideTool) {
                 tools.add(me.rerere.rikkahub.jev.jevDecideTool(jev))
             }
+            // Element finding by intent now lives inside browser_act / screen_act (Jev picks the
+            // target there), so only the yes/no verification helpers are registered here —
+            // fewer tool definitions per request.
             if (jevConfig.browser.enabled && options.contains(LocalToolOption.Browser)) {
-                val browserPrefs = browserPreferences.snapshotBlocking()
-                tools.add(
-                    me.rerere.rikkahub.jev.browserFindElementTool(
-                        jev = jev,
-                        allowClick = browserPrefs[me.rerere.rikkahub.browser.BrowserToolDefaults.CLICK] == true,
-                        allowType = browserPrefs[me.rerere.rikkahub.browser.BrowserToolDefaults.TYPE] == true,
-                    )
-                )
                 tools.add(me.rerere.rikkahub.jev.browserCheckTool(jev))
             }
             if (jevConfig.phone.enabled && options.contains(LocalToolOption.ScreenAutomation)) {
-                tools.add(me.rerere.rikkahub.jev.screenFindNodeTool(jev))
                 tools.add(me.rerere.rikkahub.jev.screenCheckTool(jev))
             }
         }

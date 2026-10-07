@@ -579,6 +579,7 @@ class GenerationLoop(
 
         val turnStartMs = android.os.SystemClock.elapsedRealtime()
         var loopGuardTripCount = 0
+        var deferredPreselectDone = false
 
         for (stepIndex in 0 until maxSteps) {
             // Wall-clock cap: any single user turn that has been running longer than the
@@ -602,7 +603,7 @@ class GenerationLoop(
 
             Log.i(TAG, "streamText: start step #$stepIndex (${model.id})")
 
-            val toolsInternal = buildList {
+            val baseTools = buildList {
                 Log.i(TAG, "generateInternal: build tools($assistant)")
                 if (assistant.enableMemory) {
                     val memoryAssistantId = if (assistant.useGlobalMemory) {
@@ -625,6 +626,34 @@ class GenerationLoop(
                 }
                 addAll(tools)
             }
+
+            // Deferred tool loading: big tool definitions (MCP servers, large local tools)
+            // are replaced by a name catalogue + tool_search when they would bloat every
+            // request. Jev pre-loads the ones the user's message needs, once per turn.
+            var deferralPlan = runCatching {
+                me.rerere.rikkahub.data.ai.tools.ToolDeferral.plan(context, baseTools, conversationId, messages)
+            }.getOrElse { me.rerere.rikkahub.data.ai.tools.ToolDeferral.Plan(baseTools, emptyList()) }
+            if (deferralPlan.isDeferring && !deferredPreselectDone) {
+                deferredPreselectDone = true
+                val userText = messages.lastOrNull { it.role == MessageRole.USER }?.toText().orEmpty()
+                if (userText.isNotBlank()) {
+                    val loaded = runCatching {
+                        me.rerere.rikkahub.data.ai.tools.ToolDeferral.preselect(jevService, conversationId, userText, deferralPlan.deferred)
+                    }.getOrDefault(emptyList())
+                    if (loaded.isNotEmpty()) {
+                        deferralPlan = me.rerere.rikkahub.data.ai.tools.ToolDeferral.plan(context, baseTools, conversationId, messages)
+                    }
+                }
+            }
+            val searchTool = if (deferralPlan.isDeferring) {
+                me.rerere.rikkahub.data.ai.tools.ToolDeferral.searchTool(deferralPlan.deferred, conversationId, jevService)
+            } else {
+                null
+            }
+            // Execution and approval look tools up in the FULL list (a deferred tool the model
+            // calls after loading it must still resolve); only the request is trimmed.
+            val toolsInternal = baseTools + listOfNotNull(searchTool)
+            val requestTools = if (searchTool != null) deferralPlan.active + searchTool else baseTools
 
             // Check if we have tool calls ready to continue after user interaction.
             val pendingTools = messages.lastOrNull()?.getTools()?.filter {
@@ -681,7 +710,7 @@ class GenerationLoop(
                         model = model,
                         providerImpl = providerImpl,
                         provider = provider,
-                        tools = toolsInternal,
+                        tools = requestTools,
                         memories = memories ?: emptyList(),
                         stream = assistant.streamOutput,
                         processingStatus = processingStatus,

@@ -64,6 +64,7 @@ fun SettingBrowserPage(
     val toolStates by vm.toolStates.collectAsStateWithLifecycle()
     val perToolTimeoutMs by vm.perToolTimeoutMs.collectAsStateWithLifecycle()
     val singleTaskTimeoutMs by vm.singleTaskTimeoutMs.collectAsStateWithLifecycle()
+    val backgroundMode by vm.backgroundMode.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     var showClearConfirm by remember { mutableStateOf(false) }
@@ -122,6 +123,14 @@ fun SettingBrowserPage(
                     },
                     headlineContent = { Text(stringResource(R.string.setting_browser_open)) },
                     supportingContent = { Text(stringResource(R.string.setting_browser_open_desc)) },
+                )
+                item(
+                    onClick = { vm.setBackgroundMode(!backgroundMode) },
+                    headlineContent = { Text(stringResource(R.string.setting_browser_background)) },
+                    supportingContent = { Text(stringResource(R.string.setting_browser_background_desc)) },
+                    trailingContent = {
+                        androidx.compose.material3.Switch(checked = backgroundMode, onCheckedChange = vm::setBackgroundMode)
+                    },
                 )
                 item(
                     onClick = { showClearConfirm = true },

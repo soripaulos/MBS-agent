@@ -68,7 +68,7 @@ object ContextDiagnostics {
 
     private fun tokens(text: String): Int = ContextBudgetPlanner.estimateTextTokens(text).toInt()
 
-    private fun schemaTokens(tool: Tool): Int {
+    internal fun schemaTokens(tool: Tool): Int {
         val schema = runCatching { tool.parameters() }.getOrNull()
         val schemaText = schema?.let { runCatching { schemaJson.encodeToString(InputSchema.serializer(), it) }.getOrNull() }.orEmpty()
         // + ~10 tokens of wrapper per tool (type/function/name keys) on every provider.
@@ -82,7 +82,7 @@ object ContextDiagnostics {
         return middle.substringAfter('_', middle).ifBlank { middle }
     }
 
-    private fun toolGroup(name: String): String = when {
+    internal fun toolGroup(name: String): String = when {
         name.startsWith("mcp__") -> "MCP · ${mcpServerOf(name)}"
         name.startsWith("workspace_") -> "Workspace"
         name.startsWith("browser_") -> "In-app browser"
@@ -96,7 +96,7 @@ object ContextDiagnostics {
 
     private val SCREEN_TOOLS = setOf(
         "tap", "long_press", "swipe", "scroll", "read_window_tree", "find_node", "click_node", "set_text",
-        "global_action", "take_screenshot", "wake_screen", "screen_find_node", "screen_check",
+        "global_action", "take_screenshot", "wake_screen", "screen_find_node", "screen_check", "screen_snapshot", "screen_act",
     )
 
     @Suppress("DEPRECATION")

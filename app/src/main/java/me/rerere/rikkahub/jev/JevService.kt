@@ -45,8 +45,10 @@ data class JevTurnPlan(
     val modelReason: String? = null,
     /** Extra system-prompt lines for this turn (skill hint, rule instructions). */
     val instructions: List<String> = emptyList(),
+    /** Skills that keep their full description in the prompt this turn; null = no trimming. */
+    val relevantSkills: Set<String>? = null,
 ) {
-    val isEmpty: Boolean get() = modelId == null && instructions.isEmpty()
+    val isEmpty: Boolean get() = modelId == null && instructions.isEmpty() && relevantSkills == null
 }
 
 /**
@@ -319,6 +321,7 @@ class JevService(
                 notes += "route: ${c.choice} ${pct(c.probability)}"
             }
         }
+        var relevantSkills: Set<String>? = null
         if (skillOn) {
             result.choice("skill")?.let { c ->
                 val name = skillKeys[c.choice]
@@ -326,10 +329,19 @@ class JevService(
                     instructions += "The \"$name\" skill matches this request. Load it with use_skill and follow it before improvising."
                     notes += "skill: $name ${pct(c.probability)}"
                 }
+                if (config.skillHint.trimListing && skills.size > config.skillHint.maxListed) {
+                    // Keep the plausible ones (a small floor filters the long tail), capped.
+                    relevantSkills = c.ranked()
+                        .filter { (key, p) -> key != "none" && p >= 0.02 }
+                        .take(config.skillHint.maxListed.coerceIn(1, 20))
+                        .mapNotNull { (key, _) -> skillKeys[key] }
+                        .toSet()
+                    notes += "skills listed: ${relevantSkills?.size}/${skills.size}"
+                }
             }
         }
         log("turn_plan", notes.ifEmpty { listOf("no change") }.joinToString("; "), result.latencyMs)
-        return JevTurnPlan(modelId, modelReason, instructions)
+        return JevTurnPlan(modelId, modelReason, instructions, relevantSkills)
     }
 
     companion object {

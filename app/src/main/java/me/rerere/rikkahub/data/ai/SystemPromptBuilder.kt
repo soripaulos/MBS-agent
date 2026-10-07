@@ -33,7 +33,7 @@ class SystemPromptBuilder {
             if (assistantPrompt.isNotBlank()) append(assistantPrompt)
             if (toolPrompts.isNotEmpty()) {
                 if (isNotEmpty()) appendLine()
-                appendLine("Tool cost guidance: prefer low-cost text tools before expensive visual or broad tools. Use read_window_tree/browser_get_text before screenshots when text is enough, and avoid repeating high-cost tools unless the state likely changed.")
+                appendLine("Tool cost guidance: prefer low-cost text tools before expensive visual or broad tools. For phone use, work from screen_snapshot + screen_act (each act returns the next screen); for the browser, from the page snapshot browser_open/browser_act return. Use screenshots only when layout or images matter, and avoid repeating high-cost tools unless the state likely changed.")
                 toolPrompts.forEachIndexed { index, toolPrompt ->
                     if (index > 0) appendLine()
                     append(toolPrompt)

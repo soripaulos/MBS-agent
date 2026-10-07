@@ -41,6 +41,14 @@ class BrowserPreferences(private val context: Context) {
 
     private val perToolTimeoutKey = longPreferencesKey("per_tool_timeout_ms")
     private val singleTaskTimeoutKey = longPreferencesKey("single_task_timeout_ms")
+    private val backgroundKey = booleanPreferencesKey("run_in_background")
+
+    /** Run in a hidden WebView instead of opening the browser screen (default on). */
+    fun backgroundModeFlow(): Flow<Boolean> = store.data.map { it[backgroundKey] ?: true }
+
+    suspend fun setBackgroundMode(enabled: Boolean) {
+        store.edit { it[backgroundKey] = enabled }
+    }
 
     init {
         // Push the persisted (or default) timeout values into [BrowserController] — the
@@ -53,6 +61,12 @@ class BrowserPreferences(private val context: Context) {
             perToolTimeoutFlow()
                 .distinctUntilChanged()
                 .onEach { BrowserController.perToolTimeoutMs = it }
+                .collect {}
+        }
+        scope.launch {
+            backgroundModeFlow()
+                .distinctUntilChanged()
+                .onEach { BrowserController.backgroundMode = it }
                 .collect {}
         }
         scope.launch {

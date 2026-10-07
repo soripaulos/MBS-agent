@@ -172,6 +172,51 @@ fun SettingToolApprovalsPage() {
                 }
             }
 
+            // Deferred tool loading (tool_search). Lives here because it is the "how tools
+            // are offered to the model" page.
+            item {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                var mode by remember { mutableStateOf(me.rerere.rikkahub.data.ai.tools.ToolLoadingPrefs.mode(ctx)) }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(stringResource(R.string.tool_loading_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        stringResource(R.string.tool_loading_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        me.rerere.rikkahub.data.ai.tools.ToolLoadingPrefs.Mode.entries.forEach { m ->
+                            androidx.compose.material3.FilterChip(
+                                selected = mode == m,
+                                onClick = {
+                                    mode = m
+                                    me.rerere.rikkahub.data.ai.tools.ToolLoadingPrefs.setMode(ctx, m)
+                                },
+                                label = {
+                                    Text(
+                                        stringResource(
+                                            when (m) {
+                                                me.rerere.rikkahub.data.ai.tools.ToolLoadingPrefs.Mode.OFF -> R.string.tool_loading_off
+                                                me.rerere.rikkahub.data.ai.tools.ToolLoadingPrefs.Mode.AUTO -> R.string.tool_loading_auto
+                                                me.rerere.rikkahub.data.ai.tools.ToolLoadingPrefs.Mode.AGGRESSIVE -> R.string.tool_loading_aggressive
+                                            }
+                                        )
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
             item {
                 Text(
                     text = stringResource(R.string.setting_page_tool_approvals_header),

@@ -39,6 +39,17 @@ class SettingBrowserViewModel(
         initialValue = BrowserToolDefaults.DEFAULT_SINGLE_TASK_TIMEOUT_MS,
     )
 
+    /** Hidden-WebView mode for in-app chats (no browser screen over the chat). */
+    val backgroundMode: StateFlow<Boolean> = prefs.backgroundModeFlow().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = true,
+    )
+
+    fun setBackgroundMode(enabled: Boolean) {
+        viewModelScope.launch { prefs.setBackgroundMode(enabled) }
+    }
+
     fun setToolEnabled(toolName: String, enabled: Boolean) {
         viewModelScope.launch { prefs.setToolEnabled(toolName, enabled) }
     }

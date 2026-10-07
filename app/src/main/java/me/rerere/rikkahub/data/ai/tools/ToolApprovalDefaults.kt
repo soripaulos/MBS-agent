@@ -228,6 +228,10 @@ object ToolApprovalDefaults {
         // side carries the same trust footprint as plain browser_click, so it
         // inherits the same approval gate.
         "browser_click_and_read",
+        // One-call act + re-snapshot (click / type / submit / select): same trust as the above.
+        "browser_act",
+        // Compact-snapshot phone-use actions (tap / type / scroll by ref or intent).
+        "screen_act",
 
         // web_fetch (item 1.2) — network egress. A bare HTTP GET/POST can exfiltrate
         // anything the LLM puts in the URL / body / headers, so it gets the same

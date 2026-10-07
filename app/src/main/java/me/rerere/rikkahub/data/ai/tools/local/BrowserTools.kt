@@ -32,6 +32,7 @@ import me.rerere.rikkahub.browser.HeadlessBrowserSessionPool
 import me.rerere.rikkahub.browser.ReadabilityRunner.runReadability
 import me.rerere.rikkahub.browser.awaitReadyState
 import me.rerere.rikkahub.browser.evaluateJavascriptAsync
+import me.rerere.rikkahub.browser.pageSnapshot
 import me.rerere.rikkahub.data.ai.tools.HeadlessConversations
 import me.rerere.rikkahub.data.ai.tools.ToolInvocationContext
 import java.io.File
@@ -166,7 +167,7 @@ private suspend fun trackJsonAction(
 
 fun browserOpenTool(context: Context, invocationContext: ToolInvocationContext? = null): Tool = Tool(
     name = BrowserToolDefaults.OPEN,
-    description = "Navigate the in-app browser to a URL. Launches the browser if it isn't open. Returns {success, current_url, title}. Resets the per-task 5-minute timer.$TELEGRAM_HEADLESS_CUE",
+    description = "Navigate the in-app browser to a URL. Returns {success, current_url, title, page}: `page` is a compact text snapshot (main text + numbered interactive elements) - act on it with browser_act(index) instead of taking a screenshot. Resets the per-task 5-minute timer.$TELEGRAM_HEADLESS_CUE",
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -208,7 +209,13 @@ fun browserOpenTool(context: Context, invocationContext: ToolInvocationContext? 
                 // fall back to the foreground BrowserActivity (the only tool that can
                 // launch it).
                 val callerConvId = invocationContext?.callerConversationId
-                val headless = isHeadlessInvocation(invocationContext)
+                val trulyHeadless = isHeadlessInvocation(invocationContext)
+                // Background mode: in-app chats also use the hidden WebView (no Activity
+                // launch over the chat, ~1-2 s faster), unless the browser screen is already
+                // open, in which case keep driving what the user is watching.
+                val headless = trulyHeadless ||
+                    (BrowserController.backgroundMode && callerConvId != null && !BrowserController.isForegroundBound())
+                if (headless && !trulyHeadless && callerConvId != null) BrowserController.markQuiet(callerConvId)
 
                 if (headless && callerConvId != null) {
                     // Peek BEFORE allocating: getOrCreate + start() spin up a ~30 MB WebView,
@@ -238,10 +245,14 @@ fun browserOpenTool(context: Context, invocationContext: ToolInvocationContext? 
                         BrowserControllerHandle.withController {
                             withContext(Dispatchers.Main) { webView.loadUrl(url) }
                             webView.awaitReadyState(8_000L)
+                            val page = runCatching { webView.pageSnapshot() }.getOrNull()
                             buildJsonObject {
                                 put("success", true)
                                 put("current_url", webView.url ?: url)
                                 put("title", webView.title.orEmpty())
+                                // What's on the page, as text + numbered elements, so the
+                                // next step can act (browser_act) without a screenshot.
+                                page?.let { put("page", it) }
                             }
                         }
                     }
@@ -280,10 +291,14 @@ fun browserOpenTool(context: Context, invocationContext: ToolInvocationContext? 
                                 withContext(Dispatchers.Main) { webView.loadUrl(url) }
                             }
                             webView.awaitReadyState(8_000L)
+                            val page = runCatching { webView.pageSnapshot() }.getOrNull()
                             buildJsonObject {
                                 put("success", true)
                                 put("current_url", webView.url ?: url)
                                 put("title", webView.title.orEmpty())
+                                // What's on the page, as text + numbered elements, so the
+                                // next step can act (browser_act) without a screenshot.
+                                page?.let { put("page", it) }
                             }
                         }
                     }
