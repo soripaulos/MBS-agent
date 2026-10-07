@@ -261,82 +261,105 @@ private suspend fun <T> retryGenerationTransportRequest(
 
 /**
  * Replace older tool-result `Image` parts with a small text elision so the same JPEGs
- * aren't re-encoded into base64 on every subsequent step. We keep the
- * [IMAGE_KEEP_LAST_N_TOOL_RESULTS] most-recent tool-result-bearing assistant messages
- * verbatim and elide everything older. User uploads (`role=USER`) are NEVER elided —
- * those are real input the model needs to reason over. Assistant-generated images
- * (model image-gen output) are also kept verbatim as those are visible product, not
- * intermediate reasoning state.
+ * aren't re-encoded into base64 on every subsequent step. We keep the images of the
+ * [IMAGE_KEEP_LAST_N_TOOL_RESULTS] most-recent image-bearing tool calls verbatim and elide
+ * everything older. Counting is per tool call, not per message: a whole agent turn is a
+ * single assistant message (StreamChunkHandler appends every step to it), so counting
+ * messages never aged anything inside the turn that produced the screenshots.
+ * User uploads (`role=USER`) are NEVER elided, and model-generated images are not tool
+ * output so they are untouched.
  */
 private fun List<UIMessage>.ageOldToolImages(): List<UIMessage> {
     var toolResultsWithImagesSeen = 0
-    return this.asReversed().map { msg ->
-        if (msg.role == MessageRole.USER) return@map msg
-        val hasImageInTool = msg.parts.any { p ->
-            p is UIMessagePart.Tool && p.output.any { it is UIMessagePart.Image }
-        }
-        if (!hasImageInTool) return@map msg
+    return mapToolPartsNewestFirst { part ->
+        if (part.output.none { it is UIMessagePart.Image }) return@mapToolPartsNewestFirst part
         toolResultsWithImagesSeen++
-        if (toolResultsWithImagesSeen <= IMAGE_KEEP_LAST_N_TOOL_RESULTS) return@map msg
-        val newParts = msg.parts.map { part ->
-            if (part is UIMessagePart.Tool) {
-                val newOutput = part.output.map { o ->
-                    if (o is UIMessagePart.Image) {
-                        UIMessagePart.Text(
-                            "[image elided — original at ${o.url}; superseded by newer screenshots]"
-                        )
-                    } else o
-                }
-                part.copy(output = newOutput)
-            } else part
-        }
-        msg.copy(parts = newParts)
-    }.asReversed()
+        if (toolResultsWithImagesSeen <= IMAGE_KEEP_LAST_N_TOOL_RESULTS) return@mapToolPartsNewestFirst part
+        part.copy(output = part.output.map { o ->
+            if (o is UIMessagePart.Image) {
+                UIMessagePart.Text("[image elided — original at ${o.url}; superseded by newer screenshots]")
+            } else o
+        })
+    }
 }
 
-// Phase 20 — mid-turn text compaction: how many recent tool-result-bearing assistant
-// messages keep their FULL tool output text, and how many chars older ones retain. This is
-// the fix for "long agent task hits the token limit after a few minutes": in a multi-step
-// turn every prior step's full tool output was replayed to the provider on every
-// subsequent step, so context grew quadratically with step count. Older outputs have
-// already been consumed by the model when they were fresh; an excerpt is enough for
-// reference, and the full text of truncated shell outputs is on disk (see
+// Mid-turn text compaction: how many recent tool calls keep their FULL output text, and how
+// many chars older ones retain. In a multi-step turn every prior step's tool output is
+// replayed to the provider on every later step, so without this the context grows
+// quadratically with step count. Older outputs were consumed when they were fresh; an
+// excerpt is enough for reference (full text of spilled shell outputs is on disk, see
 // maybeTruncateToolOutput's /tool_outputs files).
-private const val TOOL_TEXT_KEEP_LAST_N_RESULTS = 8
-private const val OLD_TOOL_TEXT_KEEP_CHARS = 1500
+private const val TOOL_TEXT_KEEP_LAST_N_RESULTS = 4
+private const val OLD_TOOL_TEXT_KEEP_CHARS = 1200
+
+// Even the freshest tool result is capped at this many chars in the prompt (the stored
+// message keeps the full text, so the UI still shows everything). Covers tools without the
+// shell spill-to-file path: a 500-node window tree or a raw DOM dump can be 100k+ chars.
+private const val MAX_INLINE_TOOL_TEXT_CHARS = 24_000
+
+// Observation tools return a picture of the current screen/page. Once a newer observation
+// of the same surface exists, the older one is stale, so only an excerpt is kept no matter
+// how recent it is.
+private const val STALE_OBSERVATION_KEEP_CHARS = 400
+private val SCREEN_OBSERVATION_TOOLS = setOf(
+    "read_window_tree", "find_node", "screen_find_node", "screen_snapshot", "screen_act", "take_screenshot",
+)
+private val BROWSER_NON_OBSERVATION_TOOLS = setOf("browser_prefs", "browser_check")
+
+private fun observationSurface(toolName: String): String? = when {
+    toolName in SCREEN_OBSERVATION_TOOLS -> "screen"
+    toolName.startsWith("browser_") && toolName !in BROWSER_NON_OBSERVATION_TOOLS -> "browser"
+    else -> null
+}
 
 /**
- * Text analog of [ageOldToolImages]: keep the last [TOOL_TEXT_KEEP_LAST_N_RESULTS]
- * tool-result-bearing assistant messages verbatim; excerpt older tool output text down to
- * [OLD_TOOL_TEXT_KEEP_CHARS] chars. USER messages are never touched.
+ * Text analog of [ageOldToolImages], counted per tool call (see there for why):
+ * - the newest observation of each surface (phone screen / browser page) stays, older
+ *   observations of the same surface shrink to [STALE_OBSERVATION_KEEP_CHARS];
+ * - the last [TOOL_TEXT_KEEP_LAST_N_RESULTS] tool calls keep their text (capped at
+ *   [MAX_INLINE_TOOL_TEXT_CHARS]); older ones shrink to [OLD_TOOL_TEXT_KEEP_CHARS].
+ * USER messages are never touched.
  */
 private fun List<UIMessage>.compactOldToolText(): List<UIMessage> {
     var toolResultsSeen = 0
-    return this.asReversed().map { msg ->
-        if (msg.role == MessageRole.USER) return@map msg
-        val hasToolOutput = msg.parts.any { p ->
-            p is UIMessagePart.Tool && p.output.isNotEmpty()
-        }
-        if (!hasToolOutput) return@map msg
+    val surfacesSeen = mutableSetOf<String>()
+    return mapToolPartsNewestFirst { part ->
+        if (part.output.isEmpty()) return@mapToolPartsNewestFirst part
         toolResultsSeen++
-        if (toolResultsSeen <= TOOL_TEXT_KEEP_LAST_N_RESULTS) return@map msg
-        val newParts = msg.parts.map { part ->
-            if (part is UIMessagePart.Tool) {
-                val newOutput = part.output.map { o ->
-                    if (o is UIMessagePart.Text && o.text.length > OLD_TOOL_TEXT_KEEP_CHARS) {
-                        UIMessagePart.Text(
-                            o.text.take(OLD_TOOL_TEXT_KEEP_CHARS) +
-                                "\n[older tool output compacted: ${o.text.length} chars total; " +
-                                "already consumed in earlier steps]"
-                        )
-                    } else o
-                }
-                part.copy(output = newOutput)
-            } else part
+        val surface = observationSurface(part.toolName)
+        val stale = surface != null && !surfacesSeen.add(surface)
+        val keep = when {
+            stale -> STALE_OBSERVATION_KEEP_CHARS
+            toolResultsSeen <= TOOL_TEXT_KEEP_LAST_N_RESULTS -> MAX_INLINE_TOOL_TEXT_CHARS
+            else -> OLD_TOOL_TEXT_KEEP_CHARS
         }
-        msg.copy(parts = newParts)
-    }.asReversed()
+        val note = when {
+            stale -> "superseded by a newer ${surface} observation"
+            keep == MAX_INLINE_TOOL_TEXT_CHARS -> "cut to fit the context; call again with a narrower query for the rest"
+            else -> "already consumed in earlier steps"
+        }
+        if (part.output.none { it is UIMessagePart.Text && it.text.length > keep }) return@mapToolPartsNewestFirst part
+        part.copy(output = part.output.map { o ->
+            if (o is UIMessagePart.Text && o.text.length > keep) {
+                UIMessagePart.Text(o.text.take(keep) + "\n[tool output compacted: ${o.text.length} chars total; $note]")
+            } else o
+        })
+    }
 }
+
+/** Rewrites tool parts newest-first across all non-USER messages, preserving order. */
+private inline fun List<UIMessage>.mapToolPartsNewestFirst(
+    transform: (UIMessagePart.Tool) -> UIMessagePart.Tool,
+): List<UIMessage> = asReversed().map { msg ->
+    if (msg.role == MessageRole.USER || msg.parts.none { it is UIMessagePart.Tool }) return@map msg
+    var changed = false
+    val newParts = msg.parts.asReversed().map { part ->
+        if (part is UIMessagePart.Tool) {
+            transform(part).also { if (it !== part) changed = true }
+        } else part
+    }.asReversed()
+    if (changed) msg.copy(parts = newParts) else msg
+}.asReversed()
 
 @Serializable
 sealed interface GenerationChunk {

@@ -18,7 +18,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.ai.tools.ToolInvocationContext
 import me.rerere.rikkahub.service.ActionLogEntry
 
-private const val DEFAULT_MAX_NODES = 500
+private const val DEFAULT_MAX_NODES = 150
 private const val MAX_NODES_HARD_CEILING = 2000
 
 internal fun nodeToJson(
@@ -59,7 +59,7 @@ fun readWindowTreeTool(
     streamer: InteractiveToolStreamer = InteractiveToolStreamer.NoOp,
 ): Tool = Tool(
     name = "read_window_tree",
-    description = "Snapshot of the active window's a11y node tree. Default filters to visible nodes that are clickable / scrollable / editable / have text or content_description. verbose=true skips the filter (use sparingly). max_nodes caps result (default 500, max 2000). package_name optionally restricts + errors if the foreground app doesn't match. Every node carries a node_id you can pass directly to click_node / set_text (preferred over by/value or coordinates). The result includes screen_state identifying the current surface (package, shade_open, ime_visible, display size).",
+    description = "Snapshot of the active window's a11y node tree. Default filters to visible nodes that are clickable / scrollable / editable / have text or content_description. verbose=true skips the filter (use sparingly). max_nodes caps result (default 150, max 2000; prefer screen_snapshot for a compact view). package_name optionally restricts + errors if the foreground app doesn't match. Every node carries a node_id you can pass directly to click_node / set_text (preferred over by/value or coordinates). The result includes screen_state identifying the current surface (package, shade_open, ime_visible, display size).",
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -69,7 +69,7 @@ fun readWindowTreeTool(
                 })
                 put("max_nodes", buildJsonObject {
                     put("type", "integer")
-                    put("description", "Cap on returned nodes (default 500, max 2000)")
+                    put("description", "Cap on returned nodes (default 150, max 2000)")
                 })
                 put("package_name", buildJsonObject {
                     put("type", "string")
